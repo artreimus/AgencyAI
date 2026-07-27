@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "profile": "local-mvp",
+  "brand": {
+    "name": "AgencyAI",
+    "slug": "agencyai",
+    "companyName": "AgencyAI",
+    "appId": "com.artreimus.agencyai",
+    "devAppId": "com.artreimus.agencyai.dev",
+    "executableName": "agencyai",
+    "artifactPrefix": "agencyai",
+    "rendererScheme": "agencyai-internal",
+    "protocol": null,
+    "nsisGuid": "866CE9A3-13BF-49B0-9D56-C9C43706CB0E",
+    "linuxDesktopName": "agencyai.desktop",
+    "supportEmail": null,
+    "docsUrl": null,
+    "feedbackUrl": null,
+    "issueUrl": "https://github.com/artreimus/AgencyAI/issues",
+    "repository": {
+      "owner": "artreimus",
+      "name": "AgencyAI"
+    },
+    "computerUse": {
+      "displayName": "AgencyAI Computer Use",
+      "bundleName": "AgencyAI Computer Use.app",
+      "bundleId": "com.artreimus.agencyai.computer-use"
+    }
+  },
+  "features": {
+    "openworkCloud": false,
+    "cloudBootstrap": false,
+    "connectLinks": false,
+    "dynamicOrgBranding": false,
+    "analytics": false,
+    "automaticUpdates": false,
+    "runtimeDownloads": false,
+    "runtimePluginInstall": false,
+    "remoteAssetFetches": false,
+    "hostedWebSearch": false,
+    "remoteWorkspaces": false,
+    "remoteAccess": false,
+    "workspaceSharing": false,
+    "legacyOpenWorkImport": false,
+    "freshStart": false,
+    "openworkModels": false,
+    "voice": false,
+    "googleWorkspace": false,
+    "browserAutomation": true,
+    "computerUse": true
+  },
+  "networkPolicy": "user-authorized"
+}

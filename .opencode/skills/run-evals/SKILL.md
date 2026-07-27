@@ -26,7 +26,7 @@ daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh <branch-or-commit> --artifacts-volume
 ```
 
-The helper creates a fresh VNC-capable sandbox from the `openwork-eval-vnc`
+The helper creates a fresh VNC-capable sandbox from the `agencyai-eval-vnc`
 snapshot, mounts the secrets + pnpm-store volumes, starts XFCE/noVNC, Vite, and
 Electron with Daytona-safe flags, waits for CDP, then prints the CDP and noVNC
 URLs. `--artifacts-volume` mounts `/daytona-artifacts` served on port 8090 for
@@ -51,7 +51,7 @@ If the app shows the Welcome page, create a workspace first (see
 ```bash
 pnpm evals --list
 pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
-pnpm evals --all --stack den     # brings up MySQL + den-api + seed for cloud flows
+pnpm evals --all
 ```
 
 The runner produces machine-checkable assertions, validated screenshots, and

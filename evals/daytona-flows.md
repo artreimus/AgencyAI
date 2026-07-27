@@ -14,21 +14,21 @@ daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 ```
 
-Use the helper. It creates from the reusable `openwork-eval-vnc` snapshot,
-mounts secrets, mounts the reusable pnpm store volume, checks out the requested
+Use the helper. It creates from the reusable `agencyai-eval-vnc` snapshot,
+mounts secrets, reuses the workspace-local pnpm store, checks out the requested
 ref, conditionally installs deps, starts services, waits for CDP, and prints the
 CDP/noVNC URLs. Keep `--artifacts-volume` on for UI validation so frame proof can
 be served from port 8090. If the snapshot is missing, create it with
 `bash .devcontainer/create-daytona-openwork-snapshot.sh`.
 
-The reusable `openwork-eval-secrets` volume is mounted at `/daytona-secrets`.
+The reusable `agencyai-eval-secrets` volume is mounted at `/daytona-secrets`.
 Create/populate it with `bash .devcontainer/setup-daytona-secrets-volume.sh
 .newtoken`; future eval sandboxes reuse it and source every
 `/daytona-secrets/*.env` file before Electron starts. The Electron starter also
 applies Daytona-safe Chromium flags via `ELECTRON_EXTRA_LAUNCH_ARGS`.
 
 To persist downloadable artifacts, pass `--artifacts-volume`. The helper mounts
-the reusable `openwork-eval-artifacts` volume at `/daytona-artifacts`, starts a
+the reusable `agencyai-eval-artifacts` volume at `/daytona-artifacts`, starts a
 static download server, and prints its Daytona preview URL. Capture screenshot
 checkpoints with `daytona exec <sandbox> -- 'bash .devcontainer/capture-daytona-screenshot.sh'`.
 
@@ -468,18 +468,11 @@ Daytona-hosted Den server stack.
 
 ### Steps
 
-1. Start the server sandbox:
-   ```bash
-   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-   ```
+1. Provision an external, upstream-compatible Den test deployment. AgencyAI
+   does not ship Den source or the removed Den sandbox launcher.
 
-2. Copy the printed `Den Web` and `Den API` URLs, then start Electron against
-   the server:
-   ```bash
-   bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
-     --den-base-url DEN_WEB_URL \
-     --den-api-base-url DEN_API_URL
-   ```
+2. Configure an upstream-profile Electron build against that deployment before
+   starting the desktop sandbox. This flow does not apply to `local-mvp`.
 
 3. In Electron, open Settings, then `Cloud Account`.
 
@@ -519,19 +512,11 @@ variables.
 
 ### Steps
 
-1. Start a fresh Daytona server sandbox and seed the demo organization:
-   ```bash
-   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-   ```
+1. Provision and seed an external, upstream-compatible Den test deployment.
 
-2. Start a fresh Electron sandbox against that Den server with recording enabled:
-   ```bash
-   bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
-     --den-base-url DEN_WEB_URL \
-     --den-api-base-url DEN_API_URL \
-     --record-video \
-     --recording-name llm-api-provisioning-desktop-from-den
-   ```
+2. Configure an upstream-profile Electron build against that deployment, then
+   start the desktop sandbox with recording enabled. AgencyAI does not ship the
+   Den launcher or cloud-bootstrap options used by the original recipe.
 
 3. Restart Electron without local AI-provider secrets so the baseline has no
    local OpenAI provider:

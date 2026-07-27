@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "profile": "upstream",
+  "brand": {
+    "name": "OpenWork",
+    "slug": "openwork",
+    "companyName": "Different AI",
+    "appId": "com.differentai.openwork",
+    "devAppId": "com.differentai.openwork.dev",
+    "executableName": "openwork",
+    "artifactPrefix": "openwork",
+    "rendererScheme": "openwork-internal",
+    "protocol": "openwork",
+    "nsisGuid": "29165F8A-586B-5470-A1CC-CFFF30A85ED3",
+    "linuxDesktopName": "openwork.desktop",
+    "supportEmail": "support@openworklabs.com",
+    "docsUrl": "https://openworklabs.com/docs",
+    "feedbackUrl": "https://openworklabs.com/feedback",
+    "issueUrl": "https://github.com/different-ai/openwork/issues",
+    "repository": {
+      "owner": "different-ai",
+      "name": "openwork"
+    },
+    "computerUse": {
+      "displayName": "OpenWork Computer Use",
+      "bundleName": "OpenWork Computer Use.app",
+      "bundleId": "com.differentai.openwork.computer-use"
+    }
+  },
+  "features": {
+    "openworkCloud": true,
+    "cloudBootstrap": true,
+    "connectLinks": true,
+    "dynamicOrgBranding": true,
+    "analytics": true,
+    "automaticUpdates": true,
+    "runtimeDownloads": true,
+    "runtimePluginInstall": true,
+    "remoteAssetFetches": true,
+    "hostedWebSearch": true,
+    "remoteWorkspaces": true,
+    "remoteAccess": true,
+    "workspaceSharing": true,
+    "legacyOpenWorkImport": true,
+    "freshStart": true,
+    "openworkModels": true,
+    "voice": true,
+    "googleWorkspace": true,
+    "browserAutomation": true,
+    "computerUse": true
+  },
+  "networkPolicy": "user-authorized"
+}

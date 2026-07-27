@@ -220,6 +220,9 @@ async function stopAll(exitCode = 0) {
 process.once("SIGINT", () => void stopAll(130));
 process.once("SIGTERM", () => void stopAll(143));
 
+runSync(nodeCmd, [resolve(repoRoot, "scripts", "check-source-closure.mjs")], { cwd: repoRoot });
+runSync(pnpmCmd, ["--filter", "@openwork/product-config", "build"], { cwd: repoRoot });
+
 if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });

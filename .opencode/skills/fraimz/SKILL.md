@@ -103,8 +103,7 @@ pnpm fraimz --flow <id> --cdp-url <printed-electron-cdp-url>
 ```
 
 The runner default-probes `:9825` (Daytona) then `:9823` (local `pnpm dev`);
-pass `--cdp-url` for any other port. `pnpm evals --all --stack den` brings up
-the cloud stack for env-gated cloud flows.
+pass `--cdp-url` for any other port.
 
 ## Pitfalls (learned the hard way)
 

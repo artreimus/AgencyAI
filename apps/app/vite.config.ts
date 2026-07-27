@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { getBuildProductProfile } from "@openwork/product-config";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -29,6 +30,15 @@ if (shortHostname && shortHostname !== hostname) {
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const appPackagePath = resolve(appRoot, "package.json");
 const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
+const productProfile = getBuildProductProfile();
+const requestedProductProfile =
+  process.env.VITE_OPENWORK_PRODUCT_PROFILE?.trim() || productProfile.profile;
+
+if (requestedProductProfile !== productProfile.profile) {
+  throw new Error(
+    `Renderer profile "${requestedProductProfile}" does not match compiled product profile "${productProfile.profile}".`,
+  );
+}
 
 function firstNonEmpty(values: Array<string | null | undefined>): string | null {
   for (const value of values) {
@@ -110,6 +120,7 @@ export default defineConfig({
     ),
     "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
     "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
+    "import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE": JSON.stringify(productProfile.profile),
   },
   plugins: [
     {

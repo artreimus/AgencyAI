@@ -35,7 +35,7 @@ brew link --overwrite daytona
 daytona version
 ```
 
-- `gh` must be authenticated to `different-ai/openwork` and able to create/delete
+- `gh` must be authenticated to `artreimus/AgencyAI` and able to create/delete
   temporary public prereleases.
 - Have a Windows OpenWork build or installer ready. Keep secrets and customer
   materials out of the temporary release asset.
@@ -113,19 +113,19 @@ ZIP="/tmp/${TAG}.zip"
 # Include .opencode/skills/daytona-windows-cert/scripts/ca-probe.js as
 # openwork/ca-probe.js.
 ditto -c -k --keepParent /tmp/openwork-win-cert-upload/openwork "$ZIP"
-gh release create "$TAG" "$ZIP" --repo different-ai/openwork --prerelease
+gh release create "$TAG" "$ZIP" --repo artreimus/AgencyAI --prerelease
 ```
 
 The release command shape from the verified session was:
 
 ```bash
-gh release create <tag> <zip> --repo different-ai/openwork --prerelease
+gh release create <tag> <zip> --repo artreimus/AgencyAI --prerelease
 ```
 
 Download and extract inside Windows:
 
 ```bash
-DOWNLOAD_URL="https://github.com/different-ai/openwork/releases/download/${TAG}/$(basename "$ZIP")"
+DOWNLOAD_URL="https://github.com/artreimus/AgencyAI/releases/download/${TAG}/$(basename "$ZIP")"
 daytona exec "$SANDBOX_ID" -- cmd /c 'mkdir C:\ow 2>NUL'
 daytona exec "$SANDBOX_ID" -- cmd /c "curl.exe -L -o C:\ow\app.zip $DOWNLOAD_URL"
 daytona exec "$SANDBOX_ID" -- cmd /c 'tar -xf C:\ow\app.zip -C C:\ow'
@@ -143,8 +143,8 @@ instead of rewriting them:
 
 ```bash
 daytona exec "$SANDBOX_ID" -- cmd /c 'mkdir C:\ow\openwork\scripts\support 2>NUL'
-daytona exec "$SANDBOX_ID" -- cmd /c 'curl.exe -L -o C:\ow\openwork\scripts\support\setup-openwork-tls-repro.ps1 https://raw.githubusercontent.com/different-ai/openwork/dev/scripts/support/setup-openwork-tls-repro.ps1'
-daytona exec "$SANDBOX_ID" -- cmd /c 'curl.exe -L -o C:\ow\openwork\scripts\support\openwork-doctor.ps1 https://raw.githubusercontent.com/different-ai/openwork/dev/scripts/support/openwork-doctor.ps1'
+daytona exec "$SANDBOX_ID" -- cmd /c 'curl.exe -L -o C:\ow\openwork\scripts\support\setup-openwork-tls-repro.ps1 https://raw.githubusercontent.com/artreimus/AgencyAI/dev/scripts/support/setup-openwork-tls-repro.ps1'
+daytona exec "$SANDBOX_ID" -- cmd /c 'curl.exe -L -o C:\ow\openwork\scripts\support\openwork-doctor.ps1 https://raw.githubusercontent.com/artreimus/AgencyAI/dev/scripts/support/openwork-doctor.ps1'
 ```
 
 ## 4. Stand up the enterprise-TLS repro

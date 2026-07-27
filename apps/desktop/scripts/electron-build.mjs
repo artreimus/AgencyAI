@@ -30,6 +30,8 @@ function run(command, args, cwd, env) {
   }
 }
 
+run(nodeCmd, [resolve(repoRoot, "scripts", "check-source-closure.mjs")], repoRoot);
+run(pnpmCmd, ["--filter", "@openwork/product-config", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
@@ -57,6 +59,21 @@ if (patched !== serverJsSrc) {
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
 copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+run(
+  nodeCmd,
+  [
+    resolve(repoRoot, "scripts", "check-source-closure.mjs"),
+    "--staged-dir",
+    resolve(repoRoot, "apps", "app", "dist"),
+    "--staged-dir",
+    packagedServerRoot,
+    "--staged-dir",
+    electronSidecarDir,
+    "--staged-dir",
+    electronHelperDir,
+  ],
+  repoRoot,
+);
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }

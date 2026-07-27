@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "LICENSE",
+      "reason": "Preserves the upstream license boundary and source provenance."
+    },
+    {
+      "path": "PLAN_AGENCYAI_DESKTOP_MVP.md",
+      "reason": "Records the reviewed source-removal boundary and release gates."
+    },
+    {
+      "path": "evals/voiceovers/agencyai-pr00-baseline-profile.md",
+      "reason": "Preserves the exact user-approved source-closure demonstration."
+    }
+  ]
+}

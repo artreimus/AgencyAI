@@ -157,8 +157,8 @@ function deriveWebBaseUrl(apiBaseUrl) {
     if (url.hostname === "api.openworklabs.com") {
       return "https://app.openworklabs.com"
     }
-    // Local/self-hosted dev: den-web commonly proxies the API at a different
-    // port on the same host (see ee/apps/den-web's /api/den proxy). Callers
+    // Legacy self-hosted deployments commonly proxy the API at a different
+    // port on the same host. Callers
     // that need this to be exact should pass --web-base-url explicitly.
     return apiBaseUrl
   } catch {
