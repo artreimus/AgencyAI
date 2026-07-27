@@ -26,6 +26,26 @@ export type OpencodeExecutionSnapshot = {
 };
 
 const SECRET_ENV_PATTERN = /(TOKEN|PASSWORD|USERNAME|AUTH|SECRET|KEY|CREDENTIAL)/i;
+const NON_SECRET_STORAGE_ENV_NAMES = new Set([
+  "OPENWORK_CACHE_DIR",
+  "OPENWORK_DATA_DIR",
+  "OPENWORK_DESKTOP_BOOTSTRAP_PATH",
+  "OPENWORK_ENV_STORE",
+  "OPENWORK_MCP_AUTH_PATH",
+  "OPENWORK_RUNTIME_DB",
+  "OPENWORK_SERVER_CONFIG",
+  "OPENWORK_STORAGE_ROOT",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_DB",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+]);
+
+function isSecretEnvironmentName(name: string): boolean {
+  return !NON_SECRET_STORAGE_ENV_NAMES.has(name) && SECRET_ENV_PATTERN.test(name);
+}
 
 function randomSecret(): string {
   return randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
@@ -85,8 +105,8 @@ export async function createManagedOpencodeServer(options: {
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")
     .map(([name, value]) => ({
       name,
-      value: SECRET_ENV_PATTERN.test(name) ? "<redacted>" : value,
-      redacted: SECRET_ENV_PATTERN.test(name),
+      value: isSecretEnvironmentName(name) ? "<redacted>" : value,
+      redacted: isSecretEnvironmentName(name),
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
   const child: ChildProcess = spawn(options.bin?.trim() || "opencode", args, {

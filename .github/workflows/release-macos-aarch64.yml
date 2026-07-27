@@ -1,17 +1,24 @@
-name: Release App
+name: Legacy Release App (upstream compatibility only)
+
+# This inherited workflow is retained for upstream comparison, not as the
+# AgencyAI release lane. It has no tag trigger and is fail-closed:
+# only different-ai/openwork can opt in to a manual run. PR07 will introduce
+# a separate AgencyAI release lane after the local desktop MVP is validated.
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
+      enable_legacy_upstream_publish:
+        description: "Allow the inherited workflow to publish from different-ai/openwork only"
+        required: true
+        type: boolean
+        default: false
       tag:
         description: "Tag to release (e.g., v0.1.2). Leave empty to use current ref."
         required: false
         type: string
       release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
+        description: "Release title (defaults to AgencyAI <tag>)"
         required: false
         type: string
       release_body:
@@ -63,9 +70,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_POSTHOG_KEY: ""
+
 jobs:
+  legacy-upstream-release-guard:
+    name: Authorize inherited upstream release
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      inputs.enable_legacy_upstream_publish == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm explicit upstream-only opt-in
+        run: echo "Inherited publishing is explicitly enabled for different-ai/openwork."
+
   resolve-release:
     name: Resolve Release Metadata
+    needs: legacy-upstream-release-guard
     # SignPath trusted builds require every job leading to the Windows signing
     # request to use GitHub-hosted runners.
     runs-on: ubuntu-latest
@@ -123,18 +148,18 @@ jobs:
           if [ -n "$RELEASE_NAME_INPUT" ]; then
             RELEASE_NAME="$RELEASE_NAME_INPUT"
           else
-            RELEASE_NAME="OpenWork $TAG"
+            RELEASE_NAME="AgencyAI $TAG"
           fi
 
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nAgencyAI %s desktop release.\n\n%s\n%s' \
               "## What's new" \
               "$TAG" \
               "- Download the attached installer for your platform." \
-              "- Electron builds use the attached latest-mac.yml updater feed."
+              "- This beta uses manual downloads and manual upgrades."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -408,7 +433,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config electron-builder.config.cjs \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -417,7 +442,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config electron-builder.config.cjs \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -427,7 +452,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config electron-builder.config.cjs \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -463,7 +488,7 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
           shopt -s nullglob
-          installers=(apps/desktop/dist-electron/openwork-win-*.exe)
+          installers=(apps/desktop/dist-electron/agencyai-win-*.exe)
           if [ "${#installers[@]}" -ne 1 ]; then
             printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
             printf '%s\n' "${installers[@]}" >&2
@@ -525,22 +550,15 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(apps/desktop/dist-electron/openwork-*)
+          assets=(apps/desktop/dist-electron/agencyai-*)
           if [ ${#assets[@]} -eq 0 ]; then
             echo "No Electron release assets found in apps/desktop/dist-electron" >&2
             exit 1
           fi
           gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
 
-      - name: Upload Electron updater manifest artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/latest*.yml
-          if-no-files-found: error
-
   publish-electron-assets:
-    name: Publish Electron Assets
+    name: Confirm Manual Desktop Upgrades
     needs: [resolve-release, verify-release, publish-electron]
     if: |
       always() &&
@@ -549,32 +567,9 @@ jobs:
       needs.verify-release.result == 'success' &&
       needs.publish-electron.result == 'success'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # Dispatch-based release recovery uses the workflow ref so fixes to
-          # release asset publishing can run without moving an already-shipped tag.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Download Electron updater manifest artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: electron-*
-          path: ${{ runner.temp }}/electron-dist
-
-      - name: Upload merged updater manifests
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
+      - name: Record manual-upgrade compatibility mode
+        run: echo "AgencyAI local-mvp does not publish updater manifests or blockmaps."
 
   publish-installers:
     name: Build + Upload Installer Assets
@@ -835,7 +830,7 @@ jobs:
 
           version="${RELEASE_TAG#v}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="AgencyAI Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev
@@ -885,7 +880,7 @@ jobs:
 
           # Dispatch-based recovery runs default draft=false but may target a
           # draft release created by an earlier tag push; always flip drafts
-          # here so AUR and updater feeds see public download URLs.
+          # here so downstream package feeds see public download URLs.
           is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
           if [ "$is_draft" != "true" ]; then
             echo "Release $RELEASE_TAG is already published; nothing to do."

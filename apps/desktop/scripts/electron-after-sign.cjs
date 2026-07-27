@@ -3,8 +3,6 @@ const { existsSync, mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
-const computerUseHelperAppName = "OpenWork Computer Use.app";
-
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit" });
   if (result.status !== 0) {
@@ -35,12 +33,12 @@ function requireEnv(name) {
   return value;
 }
 
-function computerUseHelperPath(appPath) {
+function computerUseHelperPath(appPath, computerUseHelperAppName) {
   return path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
 }
 
-function verifyComputerUseHelper(appPath, requireDistributionSignature) {
-  const helperPath = computerUseHelperPath(appPath);
+function verifyComputerUseHelper(appPath, computerUseHelperAppName, requireDistributionSignature) {
+  const helperPath = computerUseHelperPath(appPath, computerUseHelperAppName);
   if (!existsSync(helperPath)) {
     throw new Error(`Computer Use helper app is missing from packaged app: ${helperPath}`);
   }
@@ -66,11 +64,19 @@ async function afterSign(context) {
     return;
   }
 
+  const { getBuildProductProfile } = await import("@openwork/product-config");
+  const productProfile = getBuildProductProfile();
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
-  verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true");
+  verifyComputerUseHelper(
+    appPath,
+    productProfile.brand.computerUse.bundleName,
+    process.env.MACOS_NOTARIZE === "true",
+  );
 
-  const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
+  const notaryTempDir = mkdtempSync(
+    path.join(tmpdir(), `${productProfile.brand.artifactPrefix}-electron-notary-`),
+  );
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
   const keyPath = requireEnv("APPLE_API_KEY_PATH");
   const keyId = requireEnv("APPLE_API_KEY");

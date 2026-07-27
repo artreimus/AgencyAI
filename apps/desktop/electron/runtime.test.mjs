@@ -7,13 +7,111 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   commandMatchesPackagedSidecar,
+  createRuntimeManager,
   embeddedServerImportUrl,
+  mergeRuntimeChildEnv,
   prioritizeWorkspacePaths,
+  resolveRuntimeRemoteAccessEnabled,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
+import {
+  STORAGE_LAYOUT_ENVIRONMENT_KEYS,
+  resolveStorageLayout,
+  storageLayoutEnvironment,
+} from "./storage-layout.mjs";
+
+describe("mergeRuntimeChildEnv", () => {
+  it("keeps HOME while storage-owned paths override inherited and caller values", () => {
+    const environment = mergeRuntimeChildEnv(
+      {
+        HOME: "/Users/ada",
+        USERPROFILE: "/Users/ada",
+        XDG_CONFIG_HOME: "/tmp/inherited-config",
+        OPENWORK_RUNTIME_DB: "/tmp/inherited-runtime.sqlite",
+      },
+      { NODE_EXTRA_CA_CERTS: "/tmp/system-ca.pem" },
+      {
+        XDG_CONFIG_HOME: "/tmp/caller-config",
+        OPENCODE_CONFIG_DIR: "/tmp/caller-opencode",
+      },
+      {
+        XDG_CONFIG_HOME: "/tmp/agencyai/config",
+        OPENWORK_RUNTIME_DB: "/tmp/agencyai/data/openwork/runtime.sqlite",
+        OPENCODE_CONFIG_DIR: "/tmp/agencyai/config/opencode",
+      },
+    );
+
+    assert.equal(environment.HOME, "/Users/ada");
+    assert.equal(environment.USERPROFILE, "/Users/ada");
+    assert.equal(environment.NODE_EXTRA_CA_CERTS, "/tmp/system-ca.pem");
+    assert.equal(environment.XDG_CONFIG_HOME, "/tmp/agencyai/config");
+    assert.equal(
+      environment.OPENWORK_RUNTIME_DB,
+      "/tmp/agencyai/data/openwork/runtime.sqlite",
+    );
+    assert.equal(environment.OPENCODE_CONFIG_DIR, "/tmp/agencyai/config/opencode");
+  });
+
+  it("does not add or replace HOME when the parent omitted it", () => {
+    const environment = mergeRuntimeChildEnv(
+      { PATH: "/usr/bin" },
+      {},
+      {},
+      { XDG_DATA_HOME: "/tmp/agencyai/data" },
+    );
+
+    assert.equal(Object.hasOwn(environment, "HOME"), false);
+    assert.equal(Object.hasOwn(environment, "USERPROFILE"), false);
+    assert.equal(environment.XDG_DATA_HOME, "/tmp/agencyai/data");
+  });
+});
+
+describe("resolveRuntimeRemoteAccessEnabled", () => {
+  it("forces remote access off when the compiled product disallows it", () => {
+    assert.equal(resolveRuntimeRemoteAccessEnabled(true, false), false);
+    assert.equal(resolveRuntimeRemoteAccessEnabled(false, false), false);
+  });
+
+  it("preserves upstream opt-in behavior when the product allows it", () => {
+    assert.equal(resolveRuntimeRemoteAccessEnabled(true, true), true);
+    assert.equal(resolveRuntimeRemoteAccessEnabled(false, true), false);
+    assert.equal(resolveRuntimeRemoteAccessEnabled(undefined, true), false);
+  });
+});
+
+describe("runtimeStatus storage projection", () => {
+  it("does not claim server-attested storage before the embedded server starts", async () => {
+    const layout = resolveStorageLayout({
+      appDataPath: "/tmp",
+      appIdentifier: "com.artreimus.agencyai",
+      platform: "linux",
+    });
+    const runtimeManager = createRuntimeManager({
+      app: {
+        getPath(name) {
+          if (name === "userData") return layout.userData;
+          if (name === "exe") return "/tmp/AgencyAI";
+          if (name === "home") return "/home/ada";
+          throw new Error(`unexpected app path ${name}`);
+        },
+      },
+      desktopRoot: "/tmp/agencyai-desktop",
+      listLocalWorkspacePaths: async () => [],
+      storageLayout: layout,
+      storageEnvironment: {
+        ...storageLayoutEnvironment(layout),
+        HOME: "/home/ada",
+        OPENWORK_TOKEN: "secret-token",
+      },
+    });
+
+    const status = await runtimeManager.runtimeStatus();
+    assert.equal(status.storage, null);
+  });
+});
 
 describe("prioritizeWorkspacePaths", () => {
   it("keeps the active runtime workspace first", () => {

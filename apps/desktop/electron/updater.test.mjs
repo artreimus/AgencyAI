@@ -78,6 +78,41 @@ describe("installAndRestart", () => {
   });
 });
 
+describe("disabled local updater", () => {
+  it("registers fail-closed IPC without loading a feed or updater", async () => {
+    const handlers = new Map();
+    const registration = registerUpdaterIpc({
+      app: {
+        isPackaged: true,
+        getVersion: () => "0.1.0",
+      },
+      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      getMainWindow: () => null,
+      enabled: false,
+    });
+
+    assert.equal(await registration.ensureAutoUpdater(), null);
+    assert.deepEqual(await handlers.get("openwork:updater:getChannel")(), {
+      channel: "stable",
+      feedUrl: null,
+      currentVersion: "0.1.0",
+      disabled: true,
+    });
+    assert.deepEqual(await handlers.get("openwork:updater:check")(), {
+      available: false,
+      reason: "feature_disabled",
+      channel: "stable",
+      feedUrl: null,
+      currentVersion: "0.1.0",
+      disabled: true,
+    });
+    assert.deepEqual(await handlers.get("openwork:updater:download")(), {
+      ok: false,
+      reason: "feature_disabled",
+    });
+  });
+});
+
 describe("release channel changes", () => {
   it("prevents a previously downloaded update from installing on quit", () => {
     const updater = { autoInstallOnAppQuit: true };

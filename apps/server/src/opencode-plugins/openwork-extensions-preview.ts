@@ -1,6 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import {
@@ -20,6 +18,7 @@ import {
   type ConnectSkillDescriptor,
   type EngineMcpDescriptor,
 } from "./openwork-provider-adapters.js";
+import { uiControlDiscoveryPaths } from "./ui-control-discovery.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -271,20 +270,6 @@ const SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT = 400;
 const SESSION_SEARCH_CONCURRENCY = 6;
 const SESSION_SNIPPET_BEFORE = 36;
 const SESSION_SNIPPET_AFTER = 72;
-
-function userAppDataDir(): string {
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
-  if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-
-function uiControlDiscoveryPaths(): string[] {
-  return [
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
-    join(userAppDataDir(), "com.differentai.openwork", "openwork-ui-control.json"),
-    join(userAppDataDir(), "com.differentai.openwork.dev", "openwork-ui-control.json"),
-  ].filter((p): p is string => Boolean(p));
-}
 
 async function discoverUiBridge(): Promise<UiBridge | null> {
   if (cachedBridge && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;

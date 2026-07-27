@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { readdir } from "node:fs/promises";
 import type { PluginItem, ServerConfig } from "./types.js";
@@ -7,6 +6,7 @@ import { opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
 import { readRuntimeOpencodeConfig, runtimePluginList, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { resolveProfileGlobalOpencodeConfigDir } from "./storage-layout-env.js";
 
 export function normalizePluginSpec(spec: string): string {
   const trimmed = spec.trim();
@@ -76,7 +76,10 @@ export async function listPlugins(serverConfig: ServerConfig, workspaceId: strin
   items.push(...(await listPluginFiles(projectDir, "project", workspaceRoot)));
 
   if (includeGlobal) {
-    const globalDir = join(homedir(), ".config", "opencode", "plugins");
+    const globalDir = join(
+      resolveProfileGlobalOpencodeConfigDir(),
+      "plugins",
+    );
     items.push(...(await listPluginFiles(globalDir, "global")));
   }
 

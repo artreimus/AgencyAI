@@ -4,6 +4,7 @@ import type { Database as BunDatabase } from "bun:sqlite";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { DatabaseSync } from "node:sqlite";
 import type { ServerConfig } from "./types.js";
+import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 import { ensureDir } from "./utils.js";
 
 export type RuntimeBunSqliteDatabase = {
@@ -22,6 +23,8 @@ export type RuntimeNodeSqliteDatabase = {
 export type RuntimeSqliteDatabase = RuntimeBunSqliteDatabase | RuntimeNodeSqliteDatabase;
 
 export function runtimeDbPath(config: ServerConfig): string {
+  const localPath = resolveLocalStorageLayoutPath("OPENWORK_RUNTIME_DB");
+  if (localPath) return localPath;
   const override = process.env.OPENWORK_RUNTIME_DB?.trim();
   if (override) return resolve(override);
   const configPath = config.configPath?.trim();

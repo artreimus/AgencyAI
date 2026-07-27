@@ -77,7 +77,7 @@ jobs:
       - name: Upload Electron artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openwork-electron-${{ matrix.artifact }}
+          name: agencyai-electron-${{ matrix.artifact }}
           path: apps/desktop/dist-electron/**
 
   electron-macos-notarization-smoke:
@@ -132,4 +132,4 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @openwork/desktop run build:electron
-          pnpm --dir apps/desktop exec electron-builder --config electron-builder.yml --mac dmg zip --publish never
+          pnpm --dir apps/desktop exec electron-builder --config electron-builder.config.cjs --mac dmg zip --publish never

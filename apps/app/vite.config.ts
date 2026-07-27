@@ -102,7 +102,9 @@ function loadMigrationReleaseEnv(): Record<string, string> {
   }
   return out;
 }
-const migrationReleaseEnv = loadMigrationReleaseEnv();
+const migrationReleaseEnv = productProfile.features.legacyOpenWorkImport
+  ? loadMigrationReleaseEnv()
+  : {};
 
 // Electron packaged builds load index.html via `file://`, so asset URLs
 // must be relative. Tauri serves via its own protocol so absolute paths

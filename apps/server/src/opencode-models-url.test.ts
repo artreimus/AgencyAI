@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
+import { LOCAL_STORAGE_LAYOUT_PATH_KEYS } from "./storage-layout-env.js";
 
 function restoreProcessEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -27,6 +28,31 @@ async function writeFakeOpencodeBin(root: string): Promise<string> {
   ].join("\n"));
   await chmod(binPath, 0o755);
   return binPath;
+}
+
+function localStorageEnvironment(root: string): Record<string, string> {
+  const storageRoot = join(root, "agencyai");
+  return {
+    OPENWORK_STORAGE_ROOT: storageRoot,
+    OPENWORK_SERVER_CONFIG: join(storageRoot, "config", "openwork", "server.json"),
+    OPENWORK_ENV_STORE: join(storageRoot, "config", "openwork", "env.json"),
+    OPENWORK_DATA_DIR: join(storageRoot, "data", "openwork"),
+    OPENWORK_CACHE_DIR: join(storageRoot, "cache", "openwork"),
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: join(
+      storageRoot,
+      "config",
+      "openwork",
+      "desktop-bootstrap.json",
+    ),
+    OPENWORK_RUNTIME_DB: join(storageRoot, "data", "openwork", "runtime.sqlite"),
+    OPENWORK_MCP_AUTH_PATH: join(storageRoot, "data", "opencode", "mcp-auth.json"),
+    XDG_CONFIG_HOME: join(storageRoot, "config"),
+    XDG_DATA_HOME: join(storageRoot, "data"),
+    XDG_CACHE_HOME: join(storageRoot, "cache"),
+    XDG_STATE_HOME: join(storageRoot, "state"),
+    OPENCODE_CONFIG_DIR: join(storageRoot, "config", "opencode"),
+    OPENCODE_DB: join(storageRoot, "data", "opencode", "opencode.db"),
+  };
 }
 
 describe("resolveOpencodeModelsUrl", () => {
@@ -71,8 +97,17 @@ describe("startEmbeddedServer managed OpenCode models URL", () => {
     const previousCapturePath = process.env.OPENWORK_CAPTURE_MODELS_URL_FILE;
     const previousHome = process.env.HOME;
     const previousOpencodeBaseUrl = process.env.OPENWORK_OPENCODE_BASE_URL;
+    const storageEnv = localStorageEnvironment(root);
+    const storageEnvKeys = [
+      "OPENWORK_STORAGE_ROOT",
+      ...LOCAL_STORAGE_LAYOUT_PATH_KEYS,
+    ];
+    const previousStorageEnv = new Map(
+      storageEnvKeys.map((key) => [key, process.env[key]]),
+    );
 
     try {
+      Object.assign(process.env, storageEnv);
       process.env.OPENWORK_DEV_MODE = "1";
       process.env.OPENCODE_MODELS_URL = "https://catalog.example.test/models";
       process.env.OPENWORK_CAPTURE_MODELS_URL_FILE = capturePath;
@@ -81,7 +116,7 @@ describe("startEmbeddedServer managed OpenCode models URL", () => {
 
       const { startEmbeddedServer } = await import("./embedded.js");
       const handle = await startEmbeddedServer({
-        configPath: join(root, "server.json"),
+        configPath: storageEnv.OPENWORK_SERVER_CONFIG,
         host: "127.0.0.1",
         port: 0,
         token: "server-token",
@@ -100,6 +135,9 @@ describe("startEmbeddedServer managed OpenCode models URL", () => {
       restoreProcessEnv("OPENWORK_CAPTURE_MODELS_URL_FILE", previousCapturePath);
       restoreProcessEnv("HOME", previousHome);
       restoreProcessEnv("OPENWORK_OPENCODE_BASE_URL", previousOpencodeBaseUrl);
+      for (const [key, value] of previousStorageEnv) {
+        restoreProcessEnv(key, value);
+      }
       await rm(root, { recursive: true, force: true });
     }
   });

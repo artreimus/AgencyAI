@@ -246,7 +246,39 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
+export function registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow,
+  enabled = true,
+}) {
+  if (!enabled) {
+    const disabledState = () => ({
+      channel: "stable",
+      feedUrl: null,
+      currentVersion: resolveAppVersion(app),
+      disabled: true,
+    });
+    ipcMain.handle("openwork:updater:getChannel", async () => disabledState());
+    ipcMain.handle("openwork:updater:setChannel", async () => disabledState());
+    ipcMain.handle("openwork:updater:check", async () => ({
+      available: false,
+      reason: "feature_disabled",
+      ...disabledState(),
+    }));
+    ipcMain.handle("openwork:updater:download", async () => ({
+      ok: false,
+      reason: "feature_disabled",
+    }));
+    ipcMain.handle("openwork:updater:installAndRestart", async () => ({
+      ok: false,
+      reason: "feature_disabled",
+    }));
+    return Object.freeze({
+      ensureAutoUpdater: async () => null,
+    });
+  }
+
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;

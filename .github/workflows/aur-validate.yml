@@ -409,7 +409,9 @@ jobs:
           fi
 
       - name: Publish to AUR
-        if: env.PUSH_TO_AUR == 'true'
+        if: >-
+          github.repository == 'different-ai/openwork' &&
+          env.PUSH_TO_AUR == 'true'
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           RELEASE_TAG: v${{ steps.resolve.outputs.version }}

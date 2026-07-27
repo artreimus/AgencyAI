@@ -499,10 +499,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       if (target === "about:blank" || target.startsWith("data:")) return;
       // Intercept openwork:// deep links (e.g. den-auth handoff grants) so
       // in-app browser auth works without the system protocol handler.
-      if (target.startsWith("openwork://") || target.startsWith("openwork-dev://")) {
-        if (typeof onDeepLink === "function") {
-          onDeepLink([target]);
-        }
+      if (
+        typeof onDeepLink === "function" &&
+        (target.startsWith("openwork://") || target.startsWith("openwork-dev://"))
+      ) {
+        onDeepLink([target]);
         // Navigate the tab to about:blank to prevent the custom-scheme load
         // from erroring, then hide the panel. Avoid closing the tab
         // synchronously during a navigation event to prevent renderer crashes.

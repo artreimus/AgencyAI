@@ -3,6 +3,7 @@ import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { openworkEnvStorePath } from "@openwork/paths";
 
+import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 import { ensureDir, exists } from "./utils.js";
 
 // User-level environment variables, persisted so the desktop shell can inject
@@ -52,7 +53,8 @@ function isInternalEnvKey(key: string): boolean {
 }
 
 export function resolveDefaultEnvStorePath(): string {
-  return openworkEnvStorePath();
+  return resolveLocalStorageLayoutPath("OPENWORK_ENV_STORE")
+    ?? openworkEnvStorePath();
 }
 
 function parseRecord(raw: unknown): EnvRecord | null {

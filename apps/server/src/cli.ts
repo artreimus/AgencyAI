@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { mkdir } from "node:fs/promises";
+import { isProductFeatureEnabled } from "@openwork/product-config";
 
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
@@ -17,6 +18,7 @@ import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } fr
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { startWorkerActivityHeartbeat } from "./worker-activity-heartbeat.js";
+import { assertLocalStorageLayoutEnvironment } from "./storage-layout-env.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -31,6 +33,7 @@ if (args.version) {
   process.exit(0);
 }
 
+assertLocalStorageLayoutEnvironment();
 const config = await resolveServerConfig(args);
 const logger = createServerLogger(config);
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
@@ -51,7 +54,9 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
-    await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+    if (isProductFeatureEnabled("legacyOpenWorkImport")) {
+      await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+    }
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,

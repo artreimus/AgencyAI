@@ -2,6 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { openworkConfigDir } from "@openwork/paths";
 
+import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 import type { ServerConfig, TokenScope } from "./types.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 
@@ -25,6 +26,13 @@ function normalizeScope(value: unknown): TokenScope | null {
 }
 
 function resolveTokenStorePath(config: ServerConfig): string {
+  const localConfigPath = resolveLocalStorageLayoutPath(
+    "OPENWORK_SERVER_CONFIG",
+  );
+  if (localConfigPath) {
+    return join(dirname(localConfigPath), "tokens.json");
+  }
+
   const override = (process.env.OPENWORK_TOKEN_STORE ?? "").trim();
   if (override) return resolve(override);
 

@@ -134,15 +134,21 @@ function isHostedDesktopBootstrapConfig(config) {
   return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL;
 }
 
-export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
+export function createWorkspaceStore({
+  app,
+  defaultDenBaseUrl,
+  defaultRequireSignin,
+  forceRequireSignin,
+  storageLayout = null,
+  legacyOpenWorkImport = true,
+}) {
   function desktopBootstrapPath() {
+    if (storageLayout) return storageLayout.bootstrap;
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
     }
-    // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
-    // through startup (runtime.mjs buildChildEnv -> Object.assign(process.env)),
-    // which changes what os.homedir() returns. Resolve the dev-data home
-    // deterministically so early and late IPC reads target the same file.
+    // Legacy upstream dev profiles keep their bootstrap inside the explicitly
+    // selected userData tree. StorageLayout callers return above.
     if (process.env.OPENWORK_DEV_MODE === "1") {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
     }
@@ -150,6 +156,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function legacyDesktopBootstrapPath() {
+    if (!legacyOpenWorkImport) return null;
     const primary = desktopBootstrapPath();
     if (primary === DEFAULT_DESKTOP_BOOTSTRAP_PATH && LEGACY_DESKTOP_BOOTSTRAP_PATH !== primary) {
       return LEGACY_DESKTOP_BOOTSTRAP_PATH;
@@ -158,14 +165,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function workspaceStatePath() {
-    return path.join(app.getPath("userData"), "openwork-workspaces.json");
+    return path.join(storageLayout?.userData ?? app.getPath("userData"), "openwork-workspaces.json");
   }
 
   function openworkServerTokenStorePath() {
-    return path.join(app.getPath("userData"), "openwork-server-tokens.json");
+    return path.join(storageLayout?.userData ?? app.getPath("userData"), "openwork-server-tokens.json");
   }
 
   function openworkServerConfigPath() {
+    if (storageLayout) return path.join(storageLayout.openworkConfig, "server.json");
     return resolveOpenworkServerConfigPath({ env: process.env, homeDir: os.homedir() });
   }
 
@@ -174,10 +182,11 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   // shared canonical file is missing, but write openwork-workspaces.json going
   // forward so Tauri rollback and Electron both read the same desktop state.
   function legacyElectronWorkspaceStatePath() {
-    return path.join(app.getPath("userData"), "workspace-state.json");
+    return path.join(storageLayout?.userData ?? app.getPath("userData"), "workspace-state.json");
   }
 
   async function migrateLegacyElectronWorkspaceStateIfNeeded() {
+    if (!legacyOpenWorkImport) return false;
     const current = workspaceStatePath();
     const legacy = legacyElectronWorkspaceStatePath();
     try {
@@ -369,6 +378,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function bundleSearchRoots() {
+    if (!legacyOpenWorkImport) return [];
     const roots = [];
     const override = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
     if (override) roots.push(path.resolve(override));
@@ -411,6 +421,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function importBundledDesktopBootstrapConfigIfPreferred() {
+    if (!legacyOpenWorkImport) return false;
     const configPath = desktopBootstrapPath();
     const primary = await readDesktopBootstrapCandidate(configPath);
     const legacyPath = legacyDesktopBootstrapPath();
@@ -872,7 +883,11 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
-    if (!workspaceStateExists && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
+    if (
+      legacyOpenWorkImport &&
+      !workspaceStateExists &&
+      process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1"
+    ) {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
@@ -1209,6 +1224,9 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function importConfig(input = {}) {
+    if (!legacyOpenWorkImport) {
+      return { ok: false, code: "feature_disabled" };
+    }
     const archivePath = String(input.archivePath ?? "").trim();
     const targetDirRaw = String(input.targetDir ?? "").trim();
     if (!archivePath) throw new Error("archivePath is required");

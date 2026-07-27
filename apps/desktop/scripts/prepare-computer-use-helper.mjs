@@ -3,15 +3,20 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { getBuildProductProfile } from "@openwork/product-config";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const packagePath = resolve(repoRoot, "packages", "handsfree", "native", "HandsFree");
 const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
+const productProfile = getBuildProductProfile();
 const productName = "HandsFreeComputerUse";
 const helperExecutableName = "ComputerUse";
-const helperAppName = "OpenWork Computer Use.app";
-const bundleIdentifier = "com.differentai.openwork.computer-use";
+const helperDisplayName = productProfile.brand.computerUse.displayName;
+const helperAppName = productProfile.brand.computerUse.bundleName;
+const bundleIdentifier = productProfile.brand.computerUse.bundleId;
+const parentProductName = productProfile.brand.name;
 
 const readArg = (name) => {
   const raw = process.argv.slice(2);
@@ -81,7 +86,18 @@ function signHelperApp() {
   }
 }
 
+function escapeXml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
 function infoPlist() {
+  const displayName = escapeXml(helperDisplayName);
+  const parentName = escapeXml(parentProductName);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -89,7 +105,7 @@ function infoPlist() {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>OpenWork Computer Use</string>
+  <string>${displayName}</string>
   <key>CFBundleExecutable</key>
   <string>${helperExecutableName}</string>
   <key>CFBundleIdentifier</key>
@@ -99,7 +115,7 @@ function infoPlist() {
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>OpenWork Computer Use</string>
+  <string>${displayName}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -108,6 +124,8 @@ function infoPlist() {
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>ComputerUseParentProductName</key>
+  <string>${parentName}</string>
 </dict>
 </plist>
 `;
