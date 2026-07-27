@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import { RestrictionNoticeModal } from "../../design-system/restriction-notice-modal";
 
 export type RestrictionNoticePayload = {
@@ -29,6 +30,10 @@ export type RestrictionNoticeController = {
 const RestrictionNoticeContext = createContext<RestrictionNoticeController | undefined>(
   undefined,
 );
+const LOCAL_RESTRICTION_NOTICE: RestrictionNoticeController = Object.freeze({
+  show: () => undefined,
+  dismiss: () => undefined,
+});
 
 type RestrictionNoticeProviderProps = {
   children: ReactNode;
@@ -81,6 +86,9 @@ export function RestrictionNoticeProvider({ children }: RestrictionNoticeProvide
 export function useRestrictionNotice(): RestrictionNoticeController {
   const context = use(RestrictionNoticeContext);
   if (!context) {
+    if (!getCompiledRendererProductProfile().features.openworkCloud) {
+      return LOCAL_RESTRICTION_NOTICE;
+    }
     throw new Error(
       "useRestrictionNotice must be used within a RestrictionNoticeProvider",
     );

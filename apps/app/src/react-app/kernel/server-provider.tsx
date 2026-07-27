@@ -88,9 +88,16 @@ async function checkHealth(url: string): Promise<boolean> {
 type ServerProviderProps = {
   children: ReactNode;
   defaultUrl: string;
+  allowStoredServers?: boolean;
+  persistServers?: boolean;
 };
 
-export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
+export function ServerProvider({
+  children,
+  defaultUrl,
+  allowStoredServers = true,
+  persistServers = true,
+}: ServerProviderProps) {
   const [{ list, active, healthy }, dispatchServer] = useReducer(serverReducer, initialServerState);
   const readyRef = useRef(false);
 
@@ -115,17 +122,20 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       return;
     }
 
-    const storedList = readStoredList();
-    const storedActive = normalizeServerUrl(readStoredActive());
+    const storedList = allowStoredServers ? readStoredList() : [];
+    const storedActive = allowStoredServers
+      ? normalizeServerUrl(readStoredActive())
+      : undefined;
 
     const initialList = storedList.length ? storedList : fallback ? [fallback] : [];
     const initialActive = storedActive || initialList[0] || fallback || "";
 
     dispatchServer({ type: "ready", list: initialList, active: initialActive });
     readyRef.current = true;
-  }, [defaultUrl]);
+  }, [allowStoredServers, defaultUrl]);
 
   useEffect(() => {
+    if (!persistServers) return;
     if (!readyRef.current) return;
     if (typeof window === "undefined") return;
     try {
@@ -134,7 +144,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     } catch {
       // ignore
     }
-  }, [active, list]);
+  }, [active, list, persistServers]);
 
   useEffect(() => {
     if (!active) return;

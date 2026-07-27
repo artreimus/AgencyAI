@@ -10,7 +10,11 @@ import {
 } from "../../../app/lib/den";
 import { isDefaultControlPlaneUrl } from "../settings/cloud/control-plane-url";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import { useSyncExternalStore } from "react";
+
+const OPENWORK_MODELS_ENABLED =
+  getCompiledRendererProductProfile().features.openworkModels;
 
 export const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 export const OPENWORK_MODELS_PROVIDER_NAME = "OpenWork Models";
@@ -23,6 +27,7 @@ export const OPENWORK_MODELS_PROMO_VISIBLE_MS = 14_000;
 export const OPENWORK_MODELS_PROMO_REPEAT_MS = 6 * 60 * 60 * 1000;
 
 export function areOpenWorkModelsPromosDisabled() {
+  if (!OPENWORK_MODELS_ENABLED) return true;
   if (/^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_OPENWORK_MODELS ?? "").trim())) {
     return true;
   }
@@ -42,6 +47,7 @@ export function isOpenWorkModelsPromoEligible() {
 export function useOpenWorkModelsPromoEligibility() {
   return useSyncExternalStore(
     (notify) => {
+      if (!OPENWORK_MODELS_ENABLED) return () => undefined;
       if (typeof window === "undefined") return () => undefined;
       window.addEventListener(denSettingsChangedEvent, notify);
       return () => window.removeEventListener(denSettingsChangedEvent, notify);

@@ -38,7 +38,7 @@ import {
   resolveOpenWorkConnectStatus,
   type OpenWorkConnectStatus,
 } from "../../connections/openwork-connect-status";
-import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
+import type { AccountStatusMenuProps } from "./account-status-types";
 import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
@@ -147,22 +147,7 @@ function useOpenWorkModelsPromoVisible(hasOpenWorkModels: boolean) {
   return eligible && config.cloudSignin && !hasOpenWorkModels && !hidden;
 }
 
-export type AccountStatusMenuProps = {
-  clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  developerMode: boolean;
-  /** Hidden until a workspace is selected, matching the old status bar. */
-  showConnectionStatus: boolean;
-  providerConnectedIds: string[];
-  mcpConnectedCount: number;
-  loading?: boolean;
-  reloadBusy?: boolean;
-  reloadError?: string | null;
-  openWorkConnectState?: SessionCloudMcpMaintenanceState;
-  showSettingsButton?: boolean;
-  onOpenAccountSettings?: () => void;
-  onSendFeedback?: () => void;
-};
+export type { AccountStatusMenuProps } from "./account-status-types";
 
 /**
  * Sidebar footer control: the signed-in account plus the live status the app

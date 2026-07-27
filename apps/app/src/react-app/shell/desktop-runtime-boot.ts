@@ -17,6 +17,7 @@ import {
   type WorkspaceList,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
 import {
   hydrateOpenworkServerSettingsFromEnv,
   readOpenworkServerSettings,
@@ -25,6 +26,9 @@ import {
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
+import { projectLocalWorkspaces } from "./local-renderer-policy";
+
+const PRODUCT = getCompiledRendererProductProfile();
 
 // Module-scoped latch so React Strict-Mode's "mount-unmount-remount" cycle in
 // dev only triggers the boot sequence once per app launch, and the async work
@@ -85,17 +89,22 @@ export function useDesktopRuntimeBoot() {
         // the boot code reads workspace preferences. Idempotent across
         // launches (the helper only writes keys that are still empty
         // and acks the file after ingestion).
-        if (isElectronRuntime()) {
+        if (isElectronRuntime() && PRODUCT.features.legacyOpenWorkImport) {
           const hydrated = await ingestMigrationSnapshotOnElectronBoot();
           if (hydrated > 0) {
             // eslint-disable-next-line no-console -- valuable one-time signal
             console.info(`[migration] hydrated ${hydrated} localStorage keys from Tauri snapshot`);
           }
         }
-        hydrateOpenworkServerSettingsFromEnv();
-        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
+        if (PRODUCT.features.openworkCloud) {
+          hydrateOpenworkServerSettingsFromEnv();
+        }
+        const preferredRemoteAccess =
+          PRODUCT.features.remoteAccess &&
+          readOpenworkServerSettings().remoteAccessEnabled === true;
 
         const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
+          if (!PRODUCT.features.openworkCloud) return;
           if (!serverInfo?.baseUrl) return;
           writeOpenworkServerSettings({
             urlOverride: serverInfo.baseUrl,
@@ -115,13 +124,13 @@ export function useDesktopRuntimeBoot() {
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
-          setPhase("starting-engine", "Starting OpenWork server");
+          setPhase("starting-engine", `Starting ${PRODUCT.brand.name}`);
           const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
             return null;
           });
           if (!isOpenworkServerInfoLike(serverInfo) || !isOpenworkServerReady(serverInfo)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+            setError(`${PRODUCT.brand.name} did not finish starting. Please restart the app.`);
             return;
           }
           publishOpenworkServerInfo(serverInfo);
@@ -129,11 +138,17 @@ export function useDesktopRuntimeBoot() {
         };
 
         setPhase("bootstrapping-workspaces");
-        const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
-        if (!list) {
+        const rawList = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
+        if (!rawList) {
           await startServerWithoutDesktopWorkspace();
           return;
         }
+        const list: WorkspaceList = PRODUCT.features.remoteWorkspaces
+          ? rawList
+          : {
+              ...rawList,
+              workspaces: projectLocalWorkspaces(rawList.workspaces ?? []),
+            };
 
         const selectedId = resolveWorkspaceListSelectedId(list);
         const workspace = selectedId
@@ -164,12 +179,12 @@ export function useDesktopRuntimeBoot() {
           };
 
           if (boot.ok === false) {
-            setError(boot.error || "Failed to start OpenWork runtime");
+            setError(boot.error || `Failed to start ${PRODUCT.brand.name}`);
             return;
           }
 
           if (!boot.skipped && !isOpenworkServerReady(boot.openworkServer)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+            setError(`${PRODUCT.brand.name} did not finish starting. Please restart the app.`);
             return;
           }
 
@@ -199,25 +214,7 @@ export function useDesktopRuntimeBoot() {
           if (engine?.running && engine.baseUrl) {
             setActive(engine.baseUrl);
             const fresh = await openworkServerInfo().catch(() => null) as OpenworkServerInfo | null;
-            if (fresh?.baseUrl) {
-              writeOpenworkServerSettings({
-                urlOverride: fresh.baseUrl,
-                token:
-                  fresh.ownerToken?.trim() ||
-                  fresh.clientToken?.trim() ||
-                  undefined,
-                hostToken: fresh.hostToken?.trim() || undefined,
-                portOverride: fresh.port ?? undefined,
-                remoteAccessEnabled: fresh.remoteAccessEnabled === true,
-              });
-              try {
-                window.dispatchEvent(
-                  new CustomEvent("openwork-server-settings-changed"),
-                );
-              } catch {
-                /* ignore */
-              }
-            }
+            publishOpenworkServerInfo(fresh);
             markReady();
             return;
           }
@@ -247,7 +244,7 @@ export function useDesktopRuntimeBoot() {
         let engineStartResult = await engineStart(workspaceRoot, {
           runtime: "direct",
           workspacePaths: workspacePathsFor(workspaceRoot),
-          openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+          openworkRemoteAccess: preferredRemoteAccess,
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
@@ -268,7 +265,7 @@ export function useDesktopRuntimeBoot() {
             engineStartResult = await engineStart(fallbackRoot, {
               runtime: "direct",
               workspacePaths: workspacePathsFor(fallbackRoot).filter((path) => path !== workspaceRoot),
-              openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+              openworkRemoteAccess: preferredRemoteAccess,
             }).catch((error) => {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
@@ -289,23 +286,7 @@ export function useDesktopRuntimeBoot() {
           }
           try {
             const freshInfo = await openworkServerInfo() as OpenworkServerInfo | null;
-            if (freshInfo?.baseUrl) {
-              writeOpenworkServerSettings({
-                urlOverride: freshInfo.baseUrl,
-                token:
-                  freshInfo.ownerToken?.trim() ||
-                  freshInfo.clientToken?.trim() ||
-                  undefined,
-                hostToken: freshInfo.hostToken?.trim() || undefined,
-                portOverride: freshInfo.port ?? undefined,
-                remoteAccessEnabled: freshInfo.remoteAccessEnabled === true,
-              });
-              try {
-                window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
-              } catch {
-                /* ignore */
-              }
-            }
+            publishOpenworkServerInfo(freshInfo);
           } catch (error) {
             console.warn("[desktop-boot] post-engineStart openworkServerInfo failed:", error);
           }

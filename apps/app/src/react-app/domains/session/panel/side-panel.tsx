@@ -20,6 +20,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { resolveRendererAssetSrc } from "@/react-app/design-system/extension-icon-src";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
 import { ArtifactPanel } from "../artifacts/artifact-panel";
@@ -77,6 +78,9 @@ type SidePanelTabProps = {
 function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
   const dragControls = useDragControls();
   const tabRef = React.useRef<HTMLDivElement>(null);
+  const favicon = tab.type === "browser"
+    ? resolveRendererAssetSrc(tab.favicon)
+    : undefined;
 
   React.useEffect(() => {
     if (active) {
@@ -125,8 +129,8 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
           aria-label={`Select tab: ${tab.label}`}
         >
           {tab.type === "browser" ? (
-            tab.favicon ? (
-              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
+            favicon ? (
+              <img src={favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
             ) : tab.status === "loading" ? (
               <Loader2 className="animate-spin" />
             ) : (

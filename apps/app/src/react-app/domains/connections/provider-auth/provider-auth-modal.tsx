@@ -33,7 +33,7 @@ import type {
   ProviderAuthMethod,
   ProviderAuthProvider,
   ProviderOAuthStartResult,
-} from "./store";
+} from "./types";
 
 type ProviderAuthEntry = {
   id: string;

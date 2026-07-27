@@ -233,12 +233,14 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   ) : undefined
                 }
               />
-              <WorkspaceOptionCard
-                title={t("dashboard.create_remote_custom_title")}
-                description={t("dashboard.chooser_remote_desc")}
-                icon={Globe}
-                onClick={() => setScreen("remote")}
-              />
+              {props.onConfirmRemote ? (
+                <WorkspaceOptionCard
+                  title={t("dashboard.create_remote_custom_title")}
+                  description={t("dashboard.chooser_remote_desc")}
+                  icon={Globe}
+                  onClick={() => setScreen("remote")}
+                />
+              ) : null}
               {props.onImportConfig ? (
                 <div className="pt-2">
                   <button

@@ -7,10 +7,14 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
+import { projectLocalNotifications } from "../shell/local-renderer-policy";
+
 export const PERSISTED_NOTIFICATION_STORE_KEY = "openwork:notifications:v1";
 
 const MAX_NOTIFICATIONS = 100;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const PRODUCT = getCompiledRendererProductProfile();
 
 export type NotificationSeverity = "info" | "success" | "warning" | "error";
 
@@ -56,6 +60,8 @@ export type NotificationInput = {
 
 type NotificationStore = {
   notifications: AppNotification[];
+  /** Disabled entries retained only so switching profiles never destroys stored state. */
+  quarantinedNotifications: AppNotification[];
   add: (input: NotificationInput) => void;
   markAllRead: () => void;
   clearAll: () => void;
@@ -135,10 +141,49 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
   return notifications;
 }
 
+function uniqueNotifications(notifications: readonly AppNotification[]): AppNotification[] {
+  const seen = new Set<string>();
+  return notifications.filter((notification) => {
+    if (seen.has(notification.id)) return false;
+    seen.add(notification.id);
+    return true;
+  });
+}
+
+export function projectPersistedNotifications(value: unknown): {
+  notifications: AppNotification[];
+  quarantinedNotifications: AppNotification[];
+} {
+  const sanitized = prune(sanitizeNotifications(value));
+  if (PRODUCT.features.openworkCloud) {
+    return {
+      notifications: sanitized,
+      quarantinedNotifications: [],
+    };
+  }
+
+  const notifications = projectLocalNotifications(sanitized);
+  const visibleIds = new Set(notifications.map((notification) => notification.id));
+  return {
+    notifications,
+    quarantinedNotifications: sanitized.filter(
+      (notification) => !visibleIds.has(notification.id),
+    ),
+  };
+}
+
+function persistedNotificationSnapshot(state: NotificationStore): AppNotification[] {
+  return uniqueNotifications([
+    ...state.notifications,
+    ...state.quarantinedNotifications,
+  ]);
+}
+
 export const useNotificationStore = create<NotificationStore>()(
   persist(
     (set) => ({
       notifications: [],
+      quarantinedNotifications: [],
       add: (input) =>
         set((state) => {
           const now = Date.now();
@@ -180,6 +225,17 @@ export const useNotificationStore = create<NotificationStore>()(
             action: input.action,
             actionLabel: input.actionLabel,
           };
+          if (
+            !PRODUCT.features.openworkCloud &&
+            projectLocalNotifications([notification]).length === 0
+          ) {
+            return {
+              quarantinedNotifications: prune([
+                notification,
+                ...state.quarantinedNotifications,
+              ]),
+            };
+          }
           return { notifications: prune([notification, ...state.notifications]) };
         }),
       markAllRead: () =>
@@ -199,17 +255,20 @@ export const useNotificationStore = create<NotificationStore>()(
     {
       name: PERSISTED_NOTIFICATION_STORE_KEY,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ notifications: state.notifications }),
-      merge: (persistedState, currentState) => ({
-        ...currentState,
-        notifications: prune(
-          sanitizeNotifications(
-            typeof persistedState === "object" && persistedState !== null
-              ? Reflect.get(persistedState, "notifications")
-              : null,
-          ),
-        ),
+      partialize: (state) => ({
+        notifications: persistedNotificationSnapshot(state),
       }),
+      merge: (persistedState, currentState) => {
+        const projected = projectPersistedNotifications(
+          typeof persistedState === "object" && persistedState !== null
+            ? Reflect.get(persistedState, "notifications")
+            : null,
+        );
+        return {
+          ...currentState,
+          ...projected,
+        };
+      },
     },
   ),
 );

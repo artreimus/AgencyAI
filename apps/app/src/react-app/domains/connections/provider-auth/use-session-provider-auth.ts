@@ -8,6 +8,7 @@ import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { getCompiledRendererProductProfile } from "@/app/lib/product-profile";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
@@ -17,6 +18,9 @@ import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-wor
 import { reconcilePolicyDisabledProviders } from "@/react-app/domains/connections/policy-provider-reconcile";
 import { shouldWaitForCloudProviderSyncBeforePolicyReconcile } from "./managed-models-recovery";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
+
+const CLOUD_ENABLED =
+  getCompiledRendererProductProfile().features.openworkCloud;
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -98,6 +102,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const store = useMemo(
     () =>
       createProviderAuthStore({
+        cloudEnabled: CLOUD_ENABLED,
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -140,6 +145,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     [checkDesktopRestriction, markReloadRequired],
   );
   useEffect(() => {
+    if (!CLOUD_ENABLED) return;
     const bump = () => bumpDenSettingsVersion();
     window.addEventListener(denSessionUpdatedEvent, bump);
     window.addEventListener(denSettingsChangedEvent, bump);
@@ -150,6 +156,16 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   }, []);
 
   const cloudProviderSyncContext = useMemo(() => {
+    if (!CLOUD_ENABLED) {
+      return {
+        client: null,
+        workspaceId: null,
+        workspaceRoot: selectedWorkspaceRoot,
+        denBaseUrl: "",
+        activeOrgId: "",
+        signedIn: false,
+      };
+    }
     const settings = readDenSettings();
     return {
       client: opencodeClient,
@@ -242,6 +258,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   ]);
 
   useEffect(() => {
+    if (!CLOUD_ENABLED) return;
     if (
       !cloudProviderSyncContext.client ||
       !cloudProviderSyncContext.workspaceId ||

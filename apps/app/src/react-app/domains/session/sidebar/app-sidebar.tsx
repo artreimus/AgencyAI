@@ -27,6 +27,7 @@ import {
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
+import { getCompiledRendererProductProfile } from "../../../../app/lib/product-profile";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import type {
@@ -41,7 +42,6 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
@@ -101,7 +101,8 @@ import {
 } from "@/components/ui/select";
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
-import { AccountStatusMenu, type AccountStatusMenuProps } from "./account-status-menu";
+import type { AccountStatusMenuProps } from "./account-status-types";
+import { LocalAccountStatusMenu } from "./local-account-status-menu";
 import { usePlatform } from "../../../kernel/platform";
 import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
@@ -137,6 +138,16 @@ import {
   SidebarGlyphSlot,
 } from "./sidebar-lanes";
 import { useWorkbenchStore } from "../chat/workbench-store";
+
+const PRODUCT = getCompiledRendererProductProfile();
+const CloudAccountStatusMenu = React.lazy(async () => {
+  const module = await import("./account-status-menu");
+  return { default: module.AccountStatusMenu };
+});
+const CloudSidebarBrandLogo = React.lazy(async () => {
+  const module = await import("./cloud-sidebar-brand-logo");
+  return { default: module.CloudSidebarBrandLogo };
+});
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
@@ -564,10 +575,12 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => ctx.onShareWorkspace(workspace.id)}>
-          <Share2 className="size-4" />
-          {t("workspace_list.share")}
-        </DropdownMenuItem>
+        {ctx.canShareWorkspace !== false ? (
+          <DropdownMenuItem onClick={() => ctx.onShareWorkspace(workspace.id)}>
+            <Share2 className="size-4" />
+            {t("workspace_list.share")}
+          </DropdownMenuItem>
+        ) : null}
         {workspace.workspaceType === "local" && platform.capabilities.revealInFileManager ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
             <FolderOpen className="size-4" />
@@ -824,6 +837,7 @@ export type AppSidebarProps = {
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
+  canShareWorkspace?: boolean;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
   onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
@@ -994,6 +1008,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onArchiveSession: props.onArchiveSession,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
+    canShareWorkspace: props.canShareWorkspace,
     onShareWorkspace: props.onShareWorkspace,
     onRevealWorkspace: props.onRevealWorkspace,
     onRecoverWorkspace: props.onRecoverWorkspace,
@@ -1007,7 +1022,6 @@ export function AppSidebar(props: AppSidebarProps) {
     expandedSessionIds,
   };
 
-  const brandLogoUrl = useBrandLogoUrl();
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
@@ -1039,17 +1053,10 @@ export function AppSidebar(props: AppSidebarProps) {
         className="border-e-0 group-data-[side=left]:border-e-0 mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        {brandLogoUrl ? (
-          <div
-            data-testid="brand-logo"
-            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
-          >
-            <img
-              src={brandLogoUrl}
-              alt="Organization logo"
-              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
-            />
-          </div>
+        {PRODUCT.features.dynamicOrgBranding ? (
+          <React.Suspense fallback={null}>
+            <CloudSidebarBrandLogo />
+          </React.Suspense>
         ) : null}
         {props.conversationHistory ? (
           <div
@@ -1157,7 +1164,19 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5">
-          <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
+          {PRODUCT.features.openworkCloud ? (
+            <React.Suspense fallback={null}>
+              <CloudAccountStatusMenu
+                {...props.status}
+                onOpenAccountSettings={props.onOpenAccountSettings}
+              />
+            </React.Suspense>
+          ) : (
+            <LocalAccountStatusMenu
+              {...props.status}
+              onOpenAccountSettings={props.onOpenAccountSettings}
+            />
+          )}
         </SidebarFooter>
 
         <SidebarRail

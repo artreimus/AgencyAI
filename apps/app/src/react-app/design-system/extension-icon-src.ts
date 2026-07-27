@@ -1,3 +1,7 @@
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
+
+const PRODUCT = getCompiledRendererProductProfile();
+
 export function resolveExtensionIconSrc(iconSrc: string): string {
   if (!iconSrc.startsWith("/")) {
     return iconSrc;
@@ -7,13 +11,37 @@ export function resolveExtensionIconSrc(iconSrc: string): string {
   return `${base.replace(/\/?$/, "/")}${iconSrc.replace(/^\/+/, "")}`;
 }
 
+export function resolveRendererAssetSrc(
+  source: string | null | undefined,
+): string | undefined {
+  const value = source?.trim();
+  if (!value) return undefined;
+  if (PRODUCT.features.remoteAssetFetches) {
+    return resolveExtensionIconSrc(value);
+  }
+  if (value.startsWith("/") && !value.startsWith("//")) {
+    return resolveExtensionIconSrc(value);
+  }
+  if (value.startsWith("data:image/") || value.startsWith("blob:")) {
+    return value;
+  }
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith("//")) {
+    return value;
+  }
+  return undefined;
+}
+
 export function resolveExtensionIconUrl(input: {
   iconSrc?: string;
   iconSlug?: string;
   serviceUrl?: string;
 }): string | undefined {
   if (input.iconSrc) {
-    return resolveExtensionIconSrc(input.iconSrc);
+    return resolveRendererAssetSrc(input.iconSrc);
+  }
+
+  if (!PRODUCT.features.remoteAssetFetches) {
+    return undefined;
   }
 
   if (input.iconSlug) {

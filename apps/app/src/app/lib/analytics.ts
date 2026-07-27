@@ -17,6 +17,10 @@
 import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
 import { recordInspectorEvent } from "./app-inspector";
 import { resolvePosthogKey } from "./analytics-key";
+import { getCompiledRendererProductProfile } from "./product-profile";
+
+const ANALYTICS_ENABLED =
+  getCompiledRendererProductProfile().features.analytics;
 
 const ENV_POSTHOG_HOST = String(import.meta.env.VITE_OPENWORK_POSTHOG_HOST ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
@@ -47,6 +51,7 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
 
 export function isAnalyticsEnabled(): boolean {
+  if (!ANALYTICS_ENABLED) return false;
   if (typeof window === "undefined") return false;
   try {
     const raw = window.localStorage.getItem(PREFS_STORAGE_KEY);
@@ -62,6 +67,7 @@ export function isAnalyticsEnabled(): boolean {
 }
 
 export function getAnalyticsDistinctId(): string {
+  if (!ANALYTICS_ENABLED) return "disabled";
   if (typeof window === "undefined") return "server";
   try {
     const existing = window.localStorage.getItem(DISTINCT_ID_STORAGE_KEY)?.trim();
@@ -86,6 +92,7 @@ function baseProperties(): AnalyticsProperties {
  * only sent over the network when enabled and a key is configured.
  */
 export function captureAnalyticsEvent(event: string, properties: AnalyticsProperties = {}) {
+  if (!ANALYTICS_ENABLED) return;
   try {
     recordInspectorEvent(`analytics.${event}`, properties);
   } catch {
@@ -109,6 +116,7 @@ export function captureAnalyticsEvent(event: string, properties: AnalyticsProper
  * retention survive sign-in. Sends only the user id — no email or name.
  */
 function identify(denUserId: string) {
+  if (!ANALYTICS_ENABLED) return;
   if (!POSTHOG_KEY || !isAnalyticsEnabled()) return;
   queue.push({
     event: "$identify",
@@ -122,6 +130,10 @@ function identify(denUserId: string) {
 }
 
 export async function flushAnalytics(): Promise<void> {
+  if (!ANALYTICS_ENABLED) {
+    queue = [];
+    return;
+  }
   if (queue.length === 0 || !POSTHOG_KEY) return;
   const batch = queue.splice(0, MAX_BATCH);
   const distinctId = getAnalyticsDistinctId();
@@ -156,10 +168,12 @@ export async function flushAnalytics(): Promise<void> {
 const taskRunStarts = new Map<string, number>();
 
 export function markTaskRunStart(sessionId: string) {
+  if (!ANALYTICS_ENABLED) return;
   if (sessionId.trim()) taskRunStarts.set(sessionId, Date.now());
 }
 
 export function takeTaskRunStart(sessionId: string): number | null {
+  if (!ANALYTICS_ENABLED) return null;
   const startedAt = taskRunStarts.get(sessionId);
   if (startedAt === undefined) return null;
   taskRunStarts.delete(sessionId);
@@ -171,6 +185,7 @@ export function takeTaskRunStart(sessionId: string): number | null {
  * Mounted from AppRoot.
  */
 export function initAnalytics() {
+  if (!ANALYTICS_ENABLED) return;
   if (initialized || typeof window === "undefined") return;
   initialized = true;
 

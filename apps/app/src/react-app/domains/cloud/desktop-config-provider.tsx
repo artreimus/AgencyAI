@@ -32,6 +32,7 @@ import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import { isDesktopRuntime } from "../../../app/lib/runtime-env";
 import { resolveOpenworkConnection } from "../../shell/openwork-connection";
 import { useDenAuth } from "./den-auth-provider";
@@ -58,6 +59,13 @@ const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
 );
 
 const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
+const LOCAL_DESKTOP_CONFIG_STORE: DesktopConfigStore = Object.freeze({
+  config: Object.freeze({}),
+  loading: false,
+  refresh: async () => undefined,
+  refreshFresh: async () => ({}),
+  checkRestriction: () => false,
+});
 const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
 const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
@@ -422,6 +430,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 export function useDesktopConfig(): DesktopConfigStore {
   const context = use(DesktopConfigContext);
   if (!context) {
+    if (!getCompiledRendererProductProfile().features.openworkCloud) {
+      return LOCAL_DESKTOP_CONFIG_STORE;
+    }
     throw new Error("useDesktopConfig must be used within a DesktopConfigProvider");
   }
   return context;

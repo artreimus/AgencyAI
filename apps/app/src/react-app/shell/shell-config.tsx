@@ -90,7 +90,13 @@ type ShellConfigContextValue = {
 
 const ShellConfigContext = createContext<ShellConfigContextValue | undefined>(undefined);
 
-export function ShellConfigProvider({ children }: { children: ReactNode }) {
+export function ShellConfigProvider({
+  children,
+  policy,
+}: {
+  children: ReactNode;
+  policy?: Readonly<Partial<ShellConfig>>;
+}) {
   const [config, setConfig] = useState<ShellConfig>(readShellConfig);
 
   const update = useCallback((patch: Partial<ShellConfig>) => {
@@ -106,9 +112,14 @@ export function ShellConfigProvider({ children }: { children: ReactNode }) {
     writeShellConfig(DEFAULT_SHELL_CONFIG);
   }, []);
 
+  const effectiveConfig = useMemo(
+    () => ({ ...config, ...policy }),
+    [config, policy],
+  );
+
   const value = useMemo<ShellConfigContextValue>(
-    () => ({ config, update, reset }),
-    [config, update, reset],
+    () => ({ config: effectiveConfig, update, reset }),
+    [effectiveConfig, update, reset],
   );
 
   return (

@@ -23,6 +23,7 @@ import {
 import { createClient } from "@/app/lib/opencode";
 import { createOpenworkServerClient, type OpenworkServerClient } from "@/app/lib/openwork-server";
 import { readDenBootstrapConfig } from "@/app/lib/den";
+import { getCompiledRendererProductProfile } from "@/app/lib/product-profile";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceConnectionState } from "@/app/types";
@@ -41,6 +42,7 @@ import { useLocal } from "@/react-app/kernel/local-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useBootState } from "./boot-state";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
+import { projectLocalWorkspaces } from "./local-renderer-policy";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import {
   classifyRouteSessionReadError,
@@ -65,6 +67,8 @@ import {
   sessionIdForLegacyWorkspaceInference,
   workspaceSessionRoute,
 } from "./workspace-routes";
+
+const PRODUCT = getCompiledRendererProductProfile();
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
@@ -231,6 +235,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, []);
   const loadWorkspaceSessionsInBackground = useCallback(
     async (workspaces: RouteWorkspace[]) => {
+      const effectiveWorkspaces = PRODUCT.features.remoteWorkspaces
+        ? workspaces
+        : projectLocalWorkspaces(workspaces);
       const MAX_ATTEMPTS = 6;
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
@@ -358,7 +365,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
       };
 
-      await Promise.all(workspaces.map((workspace) => fetchOnce(workspace, 0)));
+      await Promise.all(effectiveWorkspaces.map((workspace) => fetchOnce(workspace, 0)));
     },
     [endpointForWorkspace, mergeFetchedSessionsWithPending],
   );
@@ -378,7 +385,16 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     try {
       if (isDesktopRuntime()) {
         try {
-          desktopList = await withRouteRefreshTimeout(workspaceBootstrap(), "Desktop workspace bootstrap") as WorkspaceList;
+          const rawDesktopList = await withRouteRefreshTimeout(
+            workspaceBootstrap(),
+            "Desktop workspace bootstrap",
+          ) as WorkspaceList;
+          desktopList = PRODUCT.features.remoteWorkspaces
+            ? rawDesktopList
+            : {
+                ...rawDesktopList,
+                workspaces: projectLocalWorkspaces(rawDesktopList.workspaces ?? []),
+              };
           desktopWorkspaces = (desktopList.workspaces ?? []).map(mapDesktopWorkspace);
         } catch (error) {
           const message = describeRouteError(error);
@@ -430,8 +446,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await withRouteRefreshTimeout(openworkClient.listWorkspaces(), "Workspace list");
+      const serverWorkspaces = PRODUCT.features.remoteWorkspaces
+        ? list.items
+        : projectLocalWorkspaces(list.items);
       const nextWorkspaces = orderRouteWorkspaces(
-        mergeRouteWorkspaces(list.items, desktopWorkspaces),
+        mergeRouteWorkspaces(serverWorkspaces, desktopWorkspaces),
         workspaceOrderIdsRef.current,
       );
 
@@ -446,6 +465,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // the user's last-active workspace from localStorage, the desktop's
       // activeId, the server's activeId, then the first known workspace.
       const persistedActiveId = readActiveWorkspaceId();
+      const desktopSelectedId = resolveWorkspaceListSelectedId(desktopList);
+      const serverActiveId = list.activeId?.trim() ?? "";
       let nextWorkspaceId =
         (routeWorkspaceId && nextWorkspaces.some((w) => w.id === routeWorkspaceId)
           ? routeWorkspaceId
@@ -453,8 +474,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         (persistedActiveId && nextWorkspaces.some((w) => w.id === persistedActiveId)
           ? persistedActiveId
           : "") ||
-        resolveWorkspaceListSelectedId(desktopList) ||
-        list.activeId?.trim() ||
+        (desktopSelectedId &&
+        nextWorkspaces.some((workspace) => workspace.id === desktopSelectedId)
+          ? desktopSelectedId
+          : "") ||
+        (serverActiveId &&
+        nextWorkspaces.some((workspace) => workspace.id === serverActiveId)
+          ? serverActiveId
+          : "") ||
         nextWorkspaces[0]?.id ||
         "";
       if (workspaceInferenceSessionId) {
@@ -764,7 +791,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
-    if (isDesktopRuntime()) {
+    if (isDesktopRuntime() && PRODUCT.features.openworkCloud) {
       if (denAuth.status === "checking") return;
       if (denAuth.isSignedIn) return;
       if (readDenBootstrapConfig().source !== "default") return;
@@ -953,6 +980,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [developerMode, opencodeClient]);
   const runRemoteWorkspaceConnectionCheck = useCallback(
     async (workspaceId: string, mode: "test" | "recover") => {
+      if (!PRODUCT.features.remoteWorkspaces) return false;
       const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
       if (!workspace || workspace.workspaceType !== "remote") return false;
       const connectionKey = getRemoteWorkspaceConnectionKey(workspace);
