@@ -63,8 +63,8 @@ describe("OpenCode distribution manifest", () => {
     assert.equal(constants.opencodeVersion.replace(/^v/, ""), manifest.binaryVersion);
     assert.equal(manifest.sdkVersion, manifest.binaryVersion);
     assert.equal(manifest.upstreamCommit, "67aec2212010d67775c35e696d8b8b54902eb338");
-    assert.equal(manifest.forkCommit, "b424e670490d6241dca6f7fbcb3d6608af69aa41");
-    assert.equal(manifest.forkTag, "product-opencode-v1.17.11-p2");
+    assert.equal(manifest.forkCommit, "1f29421c5386d77e1655f6adbf4585cedce03bc1");
+    assert.equal(manifest.forkTag, "product-opencode-v1.17.11-p3");
     assert.equal(manifest.capabilities.runtimeDownloadsDenied, true);
     assert.equal(manifest.capabilities.remoteConfigDenied, true);
     assert.equal(Object.isFrozen(manifest), true);

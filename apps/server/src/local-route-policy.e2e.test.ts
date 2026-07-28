@@ -575,8 +575,8 @@ beforeAll(async () => {
       sourceBinarySha256:
         "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
       upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
-      forkCommit: "b424e670490d6241dca6f7fbcb3d6608af69aa41",
-      forkTag: "product-opencode-v1.17.11-p2",
+      forkCommit: "1f29421c5386d77e1655f6adbf4585cedce03bc1",
+      forkTag: "product-opencode-v1.17.11-p3",
       patchset: "local-runtime-policy-v1",
     },
   } satisfies ServerConfig;
@@ -637,8 +637,8 @@ describe("local-mvp route policy", () => {
         sourceBinarySha256:
           "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
         upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
-        forkCommit: "b424e670490d6241dca6f7fbcb3d6608af69aa41",
-        forkTag: "product-opencode-v1.17.11-p2",
+        forkCommit: "1f29421c5386d77e1655f6adbf4585cedce03bc1",
+        forkTag: "product-opencode-v1.17.11-p3",
         patchset: "local-runtime-policy-v1",
       },
       modelCatalog: { source: "opencode-embedded" },

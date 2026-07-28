@@ -362,6 +362,16 @@ test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release creden
     workflow,
     /\/Users\/runner\/work\/AgencyAI-OpenCode\/AgencyAI-OpenCode/,
   );
+  assert.match(workflow, /models-dev-snapshot\.json/);
+  assert.match(workflow, /\.dependencies\.modelsDev\.sha256/);
+  assert.match(
+    workflow,
+    /export MODELS_DEV_API_JSON="\$models_snapshot"/,
+  );
+  assert.match(
+    workflow,
+    /shasum -a 256 "\$models_snapshot"/,
+  );
   assert.match(workflow, /sourceBinarySha256/);
   assert.match(workflow, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
   assert.match(workflow, /pnpm package:local:dir/);
