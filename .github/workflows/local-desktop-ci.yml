@@ -128,7 +128,9 @@ jobs:
           test "$(shasum -a 256 "$runtime_binary" | awk '{print $1}')" = "$expected_hash"
           install -m 755 "$runtime_binary" "$output_binary"
           printf "AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH=%s\n" "$output_binary" >> "$GITHUB_ENV"
-      - run: pnpm package:local:dir
+      # Electron Builder suppresses even the configured ad-hoc identity when
+      # GITHUB_BASE_REF marks a pull_request event, leaving a partial signature.
+      - run: env -u GITHUB_BASE_REF pnpm package:local:dir
       - run: pnpm inspect:local
       - run: pnpm --filter @openwork/desktop smoke:native
       - run: pnpm --filter @openwork/desktop smoke:packaged

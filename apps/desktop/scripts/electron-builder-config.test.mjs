@@ -374,7 +374,10 @@ test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release creden
   );
   assert.match(workflow, /sourceBinarySha256/);
   assert.match(workflow, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
-  assert.match(workflow, /pnpm package:local:dir/);
+  assert.match(
+    workflow,
+    /env -u GITHUB_BASE_REF pnpm package:local:dir/,
+  );
   assert.match(workflow, /pnpm --filter @openwork\/desktop smoke:packaged/);
   assert.doesNotMatch(
     workflow,
