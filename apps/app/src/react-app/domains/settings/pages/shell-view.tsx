@@ -254,7 +254,7 @@ export function ShellCustomizationView() {
                   id="shell-app-name"
                   className="h-8 text-xs"
                   value={brandAppName}
-                  placeholder="OpenWork"
+                  placeholder="AgencyAI"
                   disabled
                   onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
                 />
@@ -264,7 +264,7 @@ export function ShellCustomizationView() {
           <Alert>
             <Info />
             <AlertDescription>
-              {brandAppName === "OpenWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
+              {brandAppName === "AgencyAI" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
             </AlertDescription>
           </Alert>
         </LayoutSectionItem>
@@ -300,7 +300,7 @@ export function ShellCustomizationView() {
 
         <ToggleRow
           label="Display live status"
-          description="Show connection and OpenWork Connect health in the account menu at the bottom of the sidebar."
+          description="Show connection and AgencyAI Connect health in the account menu at the bottom of the sidebar."
           checked={config.statusBar}
           onChange={(v) => update({ statusBar: v })}
         />
@@ -328,7 +328,7 @@ export function ShellCustomizationView() {
 
         <ToggleRow
           label="Display notifications"
-          description="A bell in the header collecting updates from OpenWork Cloud and your workspaces."
+          description="A bell in the header collecting updates from AgencyAI Cloud and your workspaces."
           checked={config.notifications}
           onChange={(v) => update({ notifications: v })}
         />

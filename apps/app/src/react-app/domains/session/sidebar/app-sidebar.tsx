@@ -140,14 +140,20 @@ import {
 import { useWorkbenchStore } from "../chat/workbench-store";
 
 const PRODUCT = getCompiledRendererProductProfile();
-const CloudAccountStatusMenu = React.lazy(async () => {
-  const module = await import("./account-status-menu");
-  return { default: module.AccountStatusMenu };
-});
-const CloudSidebarBrandLogo = React.lazy(async () => {
-  const module = await import("./cloud-sidebar-brand-logo");
-  return { default: module.CloudSidebarBrandLogo };
-});
+const IS_LOCAL_MVP_BUILD =
+  import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE === "local-mvp";
+const CloudAccountStatusMenu = IS_LOCAL_MVP_BUILD
+  ? null
+  : React.lazy(async () => {
+      const module = await import("./account-status-menu");
+      return { default: module.AccountStatusMenu };
+    });
+const CloudSidebarBrandLogo = IS_LOCAL_MVP_BUILD
+  ? null
+  : React.lazy(async () => {
+      const module = await import("./cloud-sidebar-brand-logo");
+      return { default: module.CloudSidebarBrandLogo };
+    });
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
@@ -1053,7 +1059,7 @@ export function AppSidebar(props: AppSidebarProps) {
         className="border-e-0 group-data-[side=left]:border-e-0 mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        {PRODUCT.features.dynamicOrgBranding ? (
+        {PRODUCT.features.dynamicOrgBranding && CloudSidebarBrandLogo ? (
           <React.Suspense fallback={null}>
             <CloudSidebarBrandLogo />
           </React.Suspense>
@@ -1164,7 +1170,7 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5">
-          {PRODUCT.features.openworkCloud ? (
+          {PRODUCT.features.openworkCloud && CloudAccountStatusMenu ? (
             <React.Suspense fallback={null}>
               <CloudAccountStatusMenu
                 {...props.status}

@@ -1,0 +1,21 @@
+---
+title: Privacy and security boundary
+description: What stays local and when configured services can use the network.
+---
+
+# Privacy and security boundary
+
+AgencyAI's renderer, desktop server, and bundled OpenCode engine communicate
+over authenticated loopback endpoints. The packaged app does not require a
+hosted AgencyAI account, telemetry, automatic updates, or runtime downloads.
+
+Network access is user-authorized:
+
+- A model provider can receive prompts after you configure and select it.
+- A remote MCP server can receive tool calls after you add and enable it.
+- The built-in browser can visit destinations needed for a requested task.
+- An explicit source or issue link can open in the system browser.
+
+Workspace file access is limited to the selected workspace and folders the user
+authorizes. Review permission prompts, generated commands, and consequential
+external actions before approving them.

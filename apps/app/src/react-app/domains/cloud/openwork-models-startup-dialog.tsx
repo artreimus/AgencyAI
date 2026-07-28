@@ -25,7 +25,7 @@ type OpenWorkModelsStartupDialogProps = {
 };
 
 const HIGHLIGHTS = [
-  "Frontier models hosted and managed by OpenWork Cloud",
+  "Frontier models hosted and managed by AgencyAI Cloud",
   "No Anthropic, OpenAI, or Google API key setup",
   "Your own provider keys keep working whenever you prefer",
 ];
@@ -62,7 +62,7 @@ export function OpenWorkModelsStartupDialog(props: OpenWorkModelsStartupDialogPr
               Start working without API keys
             </DialogTitle>
             <DialogDescription className="mt-2 text-[14px] leading-[21px] text-muted-foreground">
-              Subscribe once through OpenWork Cloud and every workspace gets
+              Subscribe once through AgencyAI Cloud and every workspace gets
               hosted models, ready to run.
             </DialogDescription>
           </DialogHeader>

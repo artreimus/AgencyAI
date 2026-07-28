@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="agencyai-mark-title">
+  <title id="agencyai-mark-title">AgencyAI</title>
+  <rect x="32" y="32" width="960" height="960" rx="240" fill="#0b1220"/>
+  <path d="M226 796 438 266c12-30 39-46 74-46h34L330 796Z" fill="#f8fafc"/>
+  <path d="M478 220h34c35 0 62 16 74 46l212 530H694Z" fill="#f8fafc"/>
+  <rect x="342" y="520" width="340" height="92" rx="46" fill="#38bdf8"/>
+</svg>

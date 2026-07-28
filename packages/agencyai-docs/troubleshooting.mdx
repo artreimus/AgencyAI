@@ -1,0 +1,32 @@
+---
+title: Troubleshooting
+description: Recover the local runtime, provider, folder, and browser paths.
+---
+
+# Troubleshooting
+
+## The local runtime is not ready
+
+Wait for the status menu to show **Ready for local tasks**. If it does not,
+quit and reopen AgencyAI. The packaged smoke test expects the desktop server
+and OpenCode engine to recover without downloading replacements.
+
+## No model is available
+
+Open **Settings → AI Providers**, reconnect a provider, and choose one of the
+models the runtime reports as available.
+
+## A file is not authorized
+
+Open **Settings → Authorized folders** and add the smallest parent folder that
+contains the required file.
+
+## Browser tools cannot find a page
+
+Open the destination through the AgencyAI browser action first. Model-facing
+browser tools intentionally ignore tabs that were not authorized by the app.
+
+## An MCP server needs attention
+
+Open **Settings → Extensions**. Reauthenticate, enable, or remove the affected
+server, then retry the task.

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "product": "AgencyAI",
+  "navigation": [
+    {
+      "title": "Start here",
+      "pages": [
+        "getting-started.mdx",
+        "providers.mdx"
+      ]
+    },
+    {
+      "title": "Local capabilities",
+      "pages": [
+        "mcp-and-skills.mdx",
+        "browser-and-computer-use.mdx"
+      ]
+    },
+    {
+      "title": "Operate safely",
+      "pages": [
+        "privacy-and-security.mdx",
+        "troubleshooting.mdx"
+      ]
+    }
+  ]
+}

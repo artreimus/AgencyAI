@@ -1,8 +1,14 @@
+import { getCompiledRendererProductProfile } from "./product-profile";
+
 const ENV_FEEDBACK_URL = String(import.meta.env.VITE_OPENWORK_FEEDBACK_URL ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
+const PRODUCT = getCompiledRendererProductProfile();
 
 export const DEFAULT_FEEDBACK_URL =
-  ENV_FEEDBACK_URL || "https://openworklabs.com/feedback";
+  ENV_FEEDBACK_URL
+  || PRODUCT.brand.feedbackUrl
+  || PRODUCT.brand.issueUrl
+  || "https://github.com/artreimus/AgencyAI/issues";
 
 type FeedbackUrlOptions = {
   entrypoint: string;

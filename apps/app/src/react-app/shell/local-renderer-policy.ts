@@ -4,6 +4,7 @@ export const LOCAL_SETTINGS_TABS = Object.freeze([
   "permissions",
   "extensions",
   "appearance",
+  "about",
 ] as const);
 
 export type LocalSettingsTab = (typeof LOCAL_SETTINGS_TABS)[number];
@@ -48,6 +49,7 @@ export const LOCAL_CONTROL_ACTION_IDS = Object.freeze([
   "route.forward",
   "route.session",
   "route.settings.appearance",
+  "route.settings.about",
   "route.settings.authorized_folders",
   "route.settings.general",
   "route.settings.providers",

@@ -11,6 +11,15 @@ const LOCAL_OPENCODE_PLUGIN_FILES = Object.freeze([
   "agencyai-browser-automation.js",
   "agencyai-local-policy.js",
 ]);
+const AGENCYAI_DOC_FILES = Object.freeze([
+  "browser-and-computer-use.mdx",
+  "docs.json",
+  "getting-started.mdx",
+  "mcp-and-skills.mdx",
+  "privacy-and-security.mdx",
+  "providers.mdx",
+  "troubleshooting.mdx",
+]);
 
 function helperBundleIds(appId) {
   const helperBundleId = `${appId}.helper`;
@@ -104,9 +113,17 @@ function createElectronBuilderConfig(profile) {
         filter: [...LOCAL_OPENCODE_PLUGIN_FILES],
       },
       {
-        from: "../../packages/docs",
-        to: "openwork-docs",
-        filter: ["**/*.md", "**/*.mdx", "docs.json"],
+        from: ".generated/agencyai-docs",
+        to: "agencyai-docs",
+        filter: [...AGENCYAI_DOC_FILES],
+      },
+      {
+        from: "resources/licenses/OPENWORK-LICENSE.txt",
+        to: "licenses/OPENWORK-LICENSE.txt",
+      },
+      {
+        from: "resources/licenses/OPENCODE-LICENSE.txt",
+        to: "licenses/OPENCODE-LICENSE.txt",
       },
     ],
     extraMetadata: {
@@ -299,3 +316,4 @@ module.exports.createElectronBuilderConfig = createElectronBuilderConfig;
 module.exports.loadSelectedProductProfile = loadSelectedProductProfile;
 module.exports.macSigningConfiguration = macSigningConfiguration;
 module.exports.LOCAL_OPENCODE_PLUGIN_FILES = LOCAL_OPENCODE_PLUGIN_FILES;
+module.exports.AGENCYAI_DOC_FILES = AGENCYAI_DOC_FILES;

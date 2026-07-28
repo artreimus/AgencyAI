@@ -45,18 +45,23 @@ const STORAGE_ACTIVE_ORG_NAME = "openwork.den.activeOrgName";
 export const CLOUD_MCP_SYNC_MARKER_STORAGE_KEY = "openwork.den.mcp.sync";
 const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
+const COMPILED_LOCAL_MVP =
+  import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE === "local-mvp";
+const PROFILE_DEFAULT_DEN_BASE_URL = COMPILED_LOCAL_MVP
+  ? "http://127.0.0.1:1/disabled-cloud"
+  : "https://app.openworklabs.com";
 
-export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
+export const DEFAULT_DEN_AUTH_NAME = "AgencyAI User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
-    : "").trim() || "https://app.openworklabs.com";
+    : "").trim() || PROFILE_DEFAULT_DEN_BASE_URL;
 const BUILD_DEN_REQUIRE_SIGNIN =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_REQUIRE_SIGNIN === "string"
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
     : false);
 
-export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+export const HOSTED_DEFAULT_DEN_BASE_URL = PROFILE_DEFAULT_DEN_BASE_URL;
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 

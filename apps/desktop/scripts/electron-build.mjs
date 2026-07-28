@@ -10,6 +10,7 @@ const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
+const agencyAiDocsRoot = resolve(desktopRoot, ".generated", "agencyai-docs");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -34,6 +35,7 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(repoRoot, "scripts", "check-source-closure.mjs")], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/product-config", "build"], repoRoot);
+run(nodeCmd, [resolve(__dirname, "stage-agencyai-docs.mjs")], repoRoot);
 run(
   nodeCmd,
   [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir],
@@ -48,6 +50,7 @@ run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
   OPENWORK_ELECTRON_BUILD: "1",
 });
+run(nodeCmd, [resolve(__dirname, "check-agencyai-product-surface.mjs")], repoRoot);
 // Copy constants.json next to server dist so the packaged asar can resolve it.
 // Also patch the compiled import path so it works from both dev and packaged layouts.
 const serverDistDir = resolve(repoRoot, "apps", "server", "dist");
@@ -73,6 +76,8 @@ run(
     resolve(repoRoot, "apps", "app", "dist"),
     "--staged-dir",
     packagedServerRoot,
+    "--staged-dir",
+    agencyAiDocsRoot,
     "--staged-dir",
     electronSidecarDir,
     "--staged-dir",

@@ -1847,7 +1847,7 @@ function showShutdownScreen() {
   <body>
     <main>
       <div class="spinner" aria-hidden="true"></div>
-      <div class="title">Stopping OpenWork services</div>
+      <div class="title">Stopping AgencyAI services</div>
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>

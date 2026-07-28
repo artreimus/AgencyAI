@@ -1258,6 +1258,7 @@ export default defineFlow({
                 "Authorized folders",
                 "Extensions",
                 "Appearance",
+                "About & Licenses",
               ];
               const audit = await resourceAudit(ctx);
               const rawWorkspace = state.layout
@@ -1279,7 +1280,7 @@ export default defineFlow({
               const currentHead = run("git", ["rev-parse", "HEAD"]);
               const currentStatus = run("git", ["status", "--porcelain", "--untracked-files=all"]);
 
-              witness(ctx, JSON.stringify(navigation) === JSON.stringify(expectedNavigation), "Settings navigation contains exactly the five reviewed local destinations", navigation);
+              witness(ctx, JSON.stringify(navigation) === JSON.stringify(expectedNavigation), "Settings navigation contains exactly the six reviewed local destinations", navigation);
               witness(ctx, outsideAllowlist.length === 0, "Every live control action belongs to the reviewed local allowlist", { liveActionUnion, outsideAllowlist });
               witness(ctx, forbidden.length === 0, "Cloud, auth, Connect, memory, grant, sharing, voice, and remote actions are absent", forbidden);
               for (const expected of [
@@ -1292,7 +1293,7 @@ export default defineFlow({
               ]) {
                 witness(ctx, liveActionUnion.includes(expected), `Reviewed local action is live: ${expected}`, liveActionUnion);
               }
-              witness(ctx, LOCAL_SETTINGS_TABS.length === 5, "The compiled local settings policy has exactly five tabs", LOCAL_SETTINGS_TABS);
+              witness(ctx, LOCAL_SETTINGS_TABS.length === 6, "The compiled local settings policy has exactly six tabs", LOCAL_SETTINGS_TABS);
               witness(ctx, audit.unexpected.length === 0, "The renderer request audit reports zero unexpected non-loopback hosts", audit);
               witness(ctx, state.trapRequests.length === 0, "The saved-host trap reports zero requests", state.trapRequests);
               witness(ctx, rawWorkspace.includes(REMOTE_WORKSPACE_ID), "The quarantined raw remote workspace remains reversible", rawWorkspace);

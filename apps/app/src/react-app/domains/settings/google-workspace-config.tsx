@@ -25,7 +25,7 @@ type OptionalFeature = "gmailRead" | "driveFull" | "calendarWrite" | "chat";
 
 const OPTIONAL_FEATURES: { id: OptionalFeature; label: string; description: string }[] = [
   { id: "gmailRead", label: "Read Gmail", description: "Read your Gmail messages and threads." },
-  { id: "driveFull", label: "Full Google Drive access", description: "Search, read, and edit all files in your Drive, not just files created through OpenWork." },
+  { id: "driveFull", label: "Full Google Drive access", description: "Search, read, and edit all files in your Drive, not just files created through AgencyAI." },
   { id: "calendarWrite", label: "Create calendar events", description: "Create events on your Google Calendar." },
   { id: "chat", label: "Google Chat", description: "List spaces, read messages, and send messages in Google Chat." },
 ];
@@ -148,7 +148,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
       const result = await Promise.race([
         command(),
         new Promise<never>((_, reject) => {
-          window.setTimeout(() => reject(new Error("Google Workspace connection is taking too long. Try again, or restart OpenWork if the browser already said authorization was received.")), DESKTOP_ACTION_TIMEOUT_MS);
+          window.setTimeout(() => reject(new Error("Google Workspace connection is taking too long. Try again, or restart AgencyAI if the browser already said authorization was received.")), DESKTOP_ACTION_TIMEOUT_MS);
         }),
       ]);
       const next = normalizeGoogleWorkspaceAuthStatus(result);
@@ -183,9 +183,9 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
       onSaved();
       if (restartLocalServer) {
         const restarted = await restartLocalServer();
-        if (!restarted) setError("Saved Google OAuth settings. Restart OpenWork to apply them.");
+        if (!restarted) setError("Saved Google OAuth settings. Restart AgencyAI to apply them.");
       } else {
-        setError("Saved Google OAuth settings. Restart OpenWork to apply them.");
+        setError("Saved Google OAuth settings. Restart AgencyAI to apply them.");
       }
       await loadStatus({ clearError: false });
     } catch (err) {
@@ -212,7 +212,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
       return;
     }
     if (id === OPENWORK_BUILTIN_GOOGLE_CLIENT_ID) {
-      setError("That is the built-in OpenWork client ID, which cannot unlock Gmail read access. Create your own OAuth client in Google Cloud Console (APIs & Services > Credentials > Create OAuth client ID > Desktop app) and paste its client ID here.");
+      setError("That is the built-in AgencyAI client ID, which cannot unlock Gmail read access. Create your own OAuth client in Google Cloud Console (APIs & Services > Credentials > Create OAuth client ID > Desktop app) and paste its client ID here.");
       return;
     }
     await saveOauthEnv(

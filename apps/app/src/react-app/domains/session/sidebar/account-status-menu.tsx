@@ -181,7 +181,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
   const docsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.docs.open",
-    label: "Open OpenWork docs",
+    label: "Open AgencyAI docs",
     description: "Open the documentation from the account menu.",
     sideEffect: "external",
     targetRef: triggerRef,
@@ -192,7 +192,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const feedbackControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.feedback.open",
     label: "Send feedback",
-    description: "Open the OpenWork feedback surface from the account menu.",
+    description: "Open the AgencyAI feedback surface from the account menu.",
     sideEffect: "external",
     disabled: !props.onSendFeedback,
     targetRef: triggerRef,
@@ -217,10 +217,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const restoringSession = denAuth.status === "checking";
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? "AgencyAI Cloud" : "Sign in";
   const accountDetail = signedIn
-    ? (user.name ? user.email : "OpenWork Cloud")
-    : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
+    ? (user.name ? user.email : "AgencyAI Cloud")
+    : restoringSession ? "Restoring your session" : "Sync with AgencyAI Cloud";
 
   const runtimeStatus = props.showConnectionStatus
     ? resolveRuntimeStatus({
@@ -271,7 +271,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
-                ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}OpenWork Connect: ${connectStatus.label}`
+                ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}AgencyAI Connect: ${connectStatus.label}`
                 : runtimeStatus?.label}
           >
               {signedIn ? (
@@ -329,7 +329,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
                 </span>
                 <div className="min-w-0">
                   <div className="text-[11.5px] font-medium text-foreground">
-                    {`OpenWork Connect: ${connectStatus.label}`}
+                    {`AgencyAI Connect: ${connectStatus.label}`}
                   </div>
                   <div className="text-[10.5px] leading-tight text-muted-foreground">
                     {connectStatus.description}
@@ -364,7 +364,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
           >
             <Sparkles className="size-3.5 text-blue-11" />
             <span className="flex min-w-0 flex-col">
-              <span>OpenWork Models</span>
+              <span>AgencyAI Models</span>
               <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
             </span>
           </DropdownMenuItem>

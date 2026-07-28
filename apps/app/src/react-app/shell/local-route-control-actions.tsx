@@ -57,6 +57,13 @@ export function LocalRouteControlActions() {
       execute: () => navigate("/settings/appearance"),
     },
     {
+      id: "route.settings.about",
+      label: "Open About & Licenses",
+      description: "Review AgencyAI build details and open-source notices.",
+      sideEffect: "navigation",
+      execute: () => navigate("/settings/about"),
+    },
+    {
       id: "settings.panel.open",
       label: "Open a settings panel",
       description: "Navigate to a reviewed local settings panel.",

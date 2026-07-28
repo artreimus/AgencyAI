@@ -410,7 +410,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
       const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await withRouteRefreshTimeout(
         resolveOpenworkConnection(),
-        "OpenWork server connection",
+        "AgencyAI local service connection",
       );
       onHostInfo(hostInfo);
       if (!normalizedBaseUrl || !resolvedToken) {

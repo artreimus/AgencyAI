@@ -235,7 +235,7 @@ function describeTaskCreateError(error: unknown) {
     lower.includes("internal_error") ||
     lower.includes("unexpected server error")
   ) {
-    return "OpenCode is unavailable for this workspace. Retry once it restarts, or restart OpenWork if the problem continues.";
+    return "OpenCode is unavailable for this workspace. Retry once it restarts, or restart AgencyAI if the problem continues.";
   }
   return message;
 }
@@ -1502,7 +1502,7 @@ export function SessionRoute() {
     setRenameWorkspaceBusy(true);
     try {
       if (!client) {
-        toast.error("OpenWork server is unavailable. Reconnect the server before renaming workspaces.");
+        toast.error("AgencyAI local service is unavailable. Reconnect it before renaming workspaces.");
         return;
       }
       await client.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
@@ -1551,7 +1551,7 @@ export function SessionRoute() {
         downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
         return;
       }
-      throw new Error("OpenWork server is unavailable. Reconnect the server before exporting workspace config.");
+      throw new Error("AgencyAI local service is unavailable. Reconnect it before exporting workspace config.");
     },
     [endpointForWorkspace, workspaces],
   );
@@ -2134,7 +2134,7 @@ export function SessionRoute() {
           .catch(() => null);
       }
       if (!list) {
-        throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
+        throw new Error("AgencyAI local service is unavailable. Start or reconnect it before creating a workspace.");
       }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       let targetWorkspaceId = createdId;
@@ -2251,12 +2251,12 @@ export function SessionRoute() {
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
     label: "Create a local workspace",
-    description: "Create a workspace at the given folder path without showing the file picker dialog, optionally labeling its project for analytics.",
+    description: "Create a workspace at the given folder path without showing the file picker dialog, optionally adding a local project label.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
       { name: "path", type: "string", required: true, description: "Absolute folder path for the new workspace." },
-      { name: "projectLabel", type: "string", required: false, description: "Optional project name used to group the workspace's sessions in analytics." },
+      { name: "projectLabel", type: "string", required: false, description: "Optional local project name used to group the workspace's sessions." },
     ],
     execute: async (args) => {
       const parsed = args as { path?: string; projectLabel?: string } | undefined;
@@ -2297,7 +2297,7 @@ export function SessionRoute() {
         list = await client.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
-        throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+        throw new Error("AgencyAI local service is unavailable. Start or reconnect it before connecting a remote workspace.");
       }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {
@@ -2711,6 +2711,8 @@ export function SessionRoute() {
         window.requestAnimationFrame(() => modelPicker.setOpen(true));
       }}
       selectedModelLabel={modelLabel}
+      documentationUrl={PRODUCT.brand.docsUrl}
+      feedbackUrl={PRODUCT.brand.feedbackUrl}
       accessibleTargets={paletteAccessibleTargets}
       onOpenAccessibleTarget={(target) => {
         try {
