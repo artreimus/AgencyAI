@@ -12,6 +12,8 @@
  * main process resolves. Results marked `unknown` are not yet modeled —
  * tighten them instead of widening call sites.
  */
+import type { ProductProfile } from "@openwork/product-config";
+
 import type { ConnectLinkVerifyFailure, ConnectLinkVerifyResult } from "./connect-link.js";
 import type { WorkspaceWire } from "./workspace.js";
 
@@ -142,6 +144,7 @@ export type AppBuildInfo = {
   openworkDevMode?: boolean;
   os?: string | null;
   arch?: string | null;
+  productProfile: ProductProfile;
 };
 
 /** Org + first-skill identity shared by the handoff and prepared records. */

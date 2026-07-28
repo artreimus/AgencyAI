@@ -19,23 +19,10 @@ Validate that a workspace owner can:
 
 ## Recommended Daytona setup
 
-Use two sandboxes so the cloud server and desktop client behave like separate
-surfaces:
-
-```bash
-bash .devcontainer/test-server-on-daytona.sh dev
-```
-
-Save the printed Den Web and Den API URLs, then start Electron against them:
-
-```bash
-bash .devcontainer/test-on-daytona.sh dev \
-  --den-base-url <DEN_WEB_URL> \
-  --den-api-base-url <DEN_API_URL> \
-  --require-signin \
-  --record-video \
-  --recording-name cloud-signin-client-provisioning-funnel
-```
+This archival upstream-profile flow requires an externally provisioned Den test
+deployment. AgencyAI does not ship Den source, a Den sandbox launcher, or the
+cloud-bootstrap options that the original two-sandbox recipe used. Do not run
+this flow against `local-mvp`.
 
 Seed demo org, members, marketplace packages, policies, and at least one
 predefined skill/provider bundle before running the desktop half. Prefer a seed

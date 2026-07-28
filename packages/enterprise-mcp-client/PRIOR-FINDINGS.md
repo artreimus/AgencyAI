@@ -21,7 +21,7 @@ policy so the package does not absorb database, environment, or UI opinions.
 | Deleting a connection raced credential work | Delete and enterprise credential transactions lock the same connection row and clean dependent credentials/client state atomically. | Den persistence layer |
 | Catalog Ready was mistaken for provider readiness | This package reports successful catalog retrieval only. The mock/test UI must continue to label operation/mutation readiness separately. | Mock/UI PR, not this package |
 | Live timeline, retention, reconnect replay, support bundle | Package events are safe inputs; persistence, SSE, retention, and support access remain the separate live-diagnostics feature. | #2672, outside package |
-| Mock controls, realistic ServiceNow/Microsoft fixtures | Used as the next conformance gate; not copied into the production client package. | Enterprise mock package/EE app |
+| Mock controls, realistic ServiceNow/Microsoft fixtures | Used as the next conformance gate; not copied into the production client package. | Historical upstream enterprise mock |
 | Proof viewer mobile/accessibility issues | No UI exists in this server/package PR. | Outside scope |
 
 ## Explicitly not collapsed into the package

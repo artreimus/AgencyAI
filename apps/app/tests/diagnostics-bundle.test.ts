@@ -4,6 +4,7 @@ import {
   composeDiagnosticsBundleJson,
   type DiagnosticsBundleInputs,
 } from "../src/app/lib/diagnostics-bundle";
+import { getCompiledRendererProductProfile } from "../src/app/lib/product-profile";
 
 function baseInputs(): DiagnosticsBundleInputs {
   return {
@@ -110,6 +111,27 @@ describe("diagnostics bundle", () => {
     expect(parsed.opencodeEngine).toBeNull();
     expect(parsed.openworkServer.host).toBeNull();
     expect(parsed.openworkServer.settings.tokenPresent).toBe(false);
+  });
+
+  test("includes the immutable local product profile in desktop diagnostics", () => {
+    const input = baseInputs();
+    input.appInfo = {
+      version: "0.18.3",
+      gitSha: "abc1234",
+      buildEpoch: "1234567890",
+      openworkDevMode: true,
+      os: "darwin",
+      arch: "arm64",
+      productProfile: getCompiledRendererProductProfile(),
+    };
+
+    const parsed = JSON.parse(composeDiagnosticsBundleJson(input));
+
+    expect(parsed.app.productProfile.profile).toBe("local-mvp");
+    expect(parsed.app.productProfile.brand.name).toBe("AgencyAI");
+    expect(parsed.app.productProfile.features.openworkCloud).toBe(false);
+    expect(parsed.app.productProfile.features.browserAutomation).toBe(true);
+    expect(parsed.app.productProfile.features.computerUse).toBe(true);
   });
 
   test("includes sanitized Cloud health without Den or MCP tokens", () => {

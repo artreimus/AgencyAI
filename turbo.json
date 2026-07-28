@@ -1,6 +1,9 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalEnv": [
+    "OPENWORK_PRODUCT_PROFILE",
+    "VITE_OPENWORK_PRODUCT_PROFILE",
+    "VITE_OPENWORK_POSTHOG_KEY",
     "OPENWORK_DEV_MODE",
     "DATABASE_URL",
     "DEN_DB_ENCRYPTION_KEY",

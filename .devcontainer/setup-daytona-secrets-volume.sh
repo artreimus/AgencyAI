@@ -7,12 +7,12 @@ set -euo pipefail
 # Usage:
 #   bash .devcontainer/setup-daytona-secrets-volume.sh [.newtoken] [openai.env]
 
-VOLUME_NAME="${DAYTONA_SECRETS_VOLUME:-openwork-eval-secrets}"
+VOLUME_NAME="${DAYTONA_SECRETS_VOLUME:-agencyai-eval-secrets}"
 MOUNT_PATH="${DAYTONA_SECRETS_MOUNT:-/daytona-secrets}"
 LOCAL_ENV_FILE="${1:-.newtoken}"
 DEST_ENV_FILE="${2:-openai.env}"
-SANDBOX="openwork-secrets-setup-$(date +%Y%m%d-%H%M%S)"
-SNAPSHOT_NAME="${DAYTONA_EVAL_SNAPSHOT:-openwork-eval-vnc}"
+SANDBOX="agencyai-secrets-setup-$(date +%Y%m%d-%H%M%S)"
+SNAPSHOT_NAME="${DAYTONA_EVAL_SNAPSHOT:-agencyai-eval-vnc}"
 
 volume_field() {
   local name="$1"

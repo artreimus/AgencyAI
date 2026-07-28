@@ -8,7 +8,7 @@ harness in one stable path.
 `scripts/support/openwork-doctor.ps1` is a Windows PowerShell 5.1-compatible, no-admin, read-only report for customer IT. It checks DNS, TCP 443, the live TLS certificate/chain with `SslStream`, served certificates with `openssl` when available, WinHTTP/.NET proxy settings, PowerShell/OS version, and `NODE_EXTRA_CA_CERTS`. Send this Teams-ready one-liner to the customer's IT contact once the file is available at the raw URL:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "`$p=Join-Path `$env:TEMP 'openwork-doctor.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/different-ai/openwork/dev/scripts/support/openwork-doctor.ps1' -OutFile `$p; & `$p -WebUrl 'https://openwork.example.com' -ApiUrl 'https://api.openwork.example.com' -ExpectedIssuerMatch 'DigiCert'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$p=Join-Path `$env:TEMP 'openwork-doctor.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/artreimus/AgencyAI/dev/scripts/support/openwork-doctor.ps1' -OutFile `$p; & `$p -WebUrl 'https://agencyai.example.com' -ApiUrl 'https://api.agencyai.example.com' -ExpectedIssuerMatch 'DigiCert'"
 ```
 
 If raw download is blocked, save `scripts/support/openwork-doctor.ps1` locally and run:

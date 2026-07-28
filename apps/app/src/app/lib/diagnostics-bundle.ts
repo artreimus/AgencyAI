@@ -15,6 +15,7 @@ import {
   type OpenworkServerSettings,
   type OpenworkServerStatus,
 } from "./openwork-server";
+import { projectRendererProductProfile } from "./product-profile";
 import { isDesktopRuntime } from "../utils";
 
 export type DiagnosticsBundleContext = {
@@ -62,6 +63,7 @@ function pickAppInfo(info: AppBuildInfo | null) {
     gitSha: info.gitSha ?? null,
     buildEpoch: info.buildEpoch ?? null,
     openworkDevMode: info.openworkDevMode ?? null,
+    productProfile: projectRendererProductProfile(info),
   };
 }
 

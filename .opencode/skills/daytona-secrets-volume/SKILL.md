@@ -1,6 +1,6 @@
 ---
 name: daytona-secrets-volume
-description: Daytona secrets, provider key, OpenAI key, Anthropic key, real model e2e, voice e2e, eval secrets, /daytona-secrets, openwork-eval-secrets. Use for real provider tests in Daytona.
+description: Daytona secrets, provider key, OpenAI key, Anthropic key, real model e2e, voice e2e, eval secrets, /daytona-secrets, agencyai-eval-secrets. Use for real provider tests in Daytona.
 ---
 
 # Daytona Secrets Volume
@@ -13,7 +13,7 @@ Never commit secrets to the repo and never print secret values.
 The reusable Daytona volume is:
 
 ```text
-openwork-eval-secrets:/daytona-secrets
+agencyai-eval-secrets:/daytona-secrets
 ```
 
 Electron sandboxes mount it automatically through `.devcontainer/test-on-daytona.sh`.

@@ -8,11 +8,23 @@ on:
     paths:
       - apps/app/**
       - apps/desktop/**
+      - apps/server/**
+      - packages/product-config/**
+      - packages/types/**
       - packages/ui/**
+      - scripts/check-source-closure.mjs
+      - scripts/check-source-closure.test.mjs
+      - scripts/source-closure-documentary-allowlist.json
       - constants.json
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
       - package.json
       - .github/workflows/build-electron-desktop.yml
+
+env:
+  OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_POSTHOG_KEY: ""
 
 jobs:
   build-electron:
@@ -46,6 +58,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Enforce source closure
+        run: node scripts/check-source-closure.mjs
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -82,6 +97,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Enforce source closure
+        run: node scripts/check-source-closure.mjs
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

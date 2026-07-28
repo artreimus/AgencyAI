@@ -1,4 +1,4 @@
-# Daytona VNC/Computer Use image with OpenWork preinstalled.
+# Daytona VNC/Computer Use image with AgencyAI preinstalled.
 #
 # Use this for Electron/noVNC tests instead of the generic devcontainer image.
 # The base image already contains the desktop stack Daytona expects:
@@ -11,11 +11,11 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
-RUN /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun
+RUN /usr/local/share/nvm/current/bin/npm install -g pnpm@11.4.0 bun
 
 WORKDIR /workspace
 
-RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
+RUN git clone --depth 1 --branch dev https://github.com/artreimus/AgencyAI.git . \
   && mkdir -p /workspace/.openwork-daytona \
   && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.openwork-daytona/pnpm-lock.sha256 \
   && /usr/local/share/nvm/current/bin/npm cache clean --force \

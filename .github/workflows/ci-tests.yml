@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+env:
+  OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_POSTHOG_KEY: ""
+
 jobs:
   openwork-tests:
     runs-on: ${{ matrix.os }}
@@ -28,6 +33,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Enforce source closure
+        run: node scripts/check-source-closure.mjs
+
+      - name: Test source-closure guard
+        run: node --test scripts/check-source-closure.test.mjs
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -116,6 +127,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Validate product profile
+        run: pnpm --filter @openwork/product-config test
 
       - name: Run app unit tests
         run: pnpm --filter @openwork/app test

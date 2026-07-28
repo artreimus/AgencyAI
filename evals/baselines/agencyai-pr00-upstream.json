@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "1f41a52070cbc400b17b05136533e8d3737e25da",
+  "capturedAt": "2026-07-27T09:16:21.772Z",
+  "environment": {
+    "temporaryProfile": true,
+    "temporaryWorkspace": true,
+    "loopbackOnly": true,
+    "remoteAccessEnabled": false,
+    "outerSeatbeltEnforced": true,
+    "electronNestedSandboxDisabledForBaselineHarnessOnly": true
+  },
+  "canonicalFlow": {
+    "id": "core-flow",
+    "sourceSha256": "19f7fbf23fcb3c06c6987a0044693bc36f14b4c975eaa23473b4330a0668cfd3",
+    "status": "passed",
+    "exactReply": "core-flow ok",
+    "summary": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    "reportSha256": "b5c68f8de92b7b1e3650984688137111135a32dfe9c50f2ce1d4586155c724c0",
+    "fraimzSha256": "52bf9948ca31a7f0b1611186bd4b64b81e7324b2d23215cae2b0007c4f2b0b0a"
+  },
+  "mockProvider": {
+    "catalogRequests": 1,
+    "chatRequests": 2,
+    "primaryAgentRequests": 1,
+    "auxiliaryRequests": 1,
+    "unexpectedRequests": 0
+  },
+  "knownBaselineBehavior": {
+    "blockedArchitectureLookupAttempts": 16,
+    "cleanNoAttemptBaseline": false
+  },
+  "primaryCheckout": {
+    "headBefore": "1f41a52070cbc400b17b05136533e8d3737e25da",
+    "headAfter": "1f41a52070cbc400b17b05136533e8d3737e25da",
+    "statusBefore": "## dev...origin/dev",
+    "statusAfter": "## dev...origin/dev"
+  }
+}

@@ -1,5 +1,8 @@
 # OpenWork Installer
 
+> Upstream compatibility note: AgencyAI Desktop does not ship the hosted
+> controller that this legacy custom-deployment installer expects.
+
 OpenWork desktop installer for custom deployments. Release builds are generic
 signed files that do not embed organization config. Config is resolved only from
 local development env overrides, per-client build constants, or an install link
@@ -9,9 +12,8 @@ an end user runs it, the installer:
 1. Writes `desktop-bootstrap.json` to the OS-correct config location (the same path
    the desktop app and `openwork-bootstrap` CLI resolve), pointing the desktop app at
    the client's deployment. Existing extra fields (handoff, claim links) are preserved.
-2. Asks the deployment's Den API (`GET /v1/app-version`) which desktop app version it
-   supports (`latestAppVersion` — pinned per Den API build, see
-   `ee/apps/den-api/src/generated/app-version.ts`).
+2. Asks the configured upstream deployment API (`GET /v1/app-version`) which
+   desktop app version it supports (`latestAppVersion`).
 3. Downloads that exact version from the public GitHub releases and installs it
    (macOS: mounts the dmg and copies the .app into `~/Applications`; Windows: runs the
    NSIS installer silently; Linux: installs the AppImage under `~/.local/share/openwork`

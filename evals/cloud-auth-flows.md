@@ -6,17 +6,11 @@ through CDP, not a web-only build.
 
 ## Preflight
 
-1. Start the Den server sandbox:
-   ```bash
-   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-   ```
+1. Provision an external, upstream-compatible Den test deployment. AgencyAI
+   does not ship Den source or a Den sandbox launcher.
 
-2. Start the Electron sandbox against the printed Den URLs:
-   ```bash
-   bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
-     --den-base-url DEN_WEB_URL \
-     --den-api-base-url DEN_API_URL
-   ```
+2. Configure an upstream-profile Electron build to use that deployment before
+   starting the desktop sandbox. These flows do not apply to `local-mvp`.
 
 3. Connect to the printed Electron CDP URL with `browser_list` and verify the
    target is the real desktop app:

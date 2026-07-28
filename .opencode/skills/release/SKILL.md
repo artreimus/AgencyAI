@@ -21,11 +21,8 @@ e.g. `release/vX.Y.Z`). Confirm dev CI is green.
 pnpm bump:patch     # or bump:minor / bump:major / bump:set -- X.Y.Z
 ```
 
-This updates `apps/app`, `apps/desktop`, `apps/orchestrator`, `apps/server`
-package.json versions, `ee/apps/den-api/src/generated/desktop-versions.ts`
-(den-api's `PUBLISHED_DESKTOP_VERSIONS` — the install door redirects to
-`v<PUBLISHED_DESKTOP_VERSIONS[0]>`), and `pnpm-lock.yaml`. Revert incidental
-noise (e.g. `*.tsbuildinfo`) before committing.
+This updates the application package versions and `pnpm-lock.yaml`. Revert
+incidental noise (for example `*.tsbuildinfo`) before committing.
 
 Commit as `chore(release): vX.Y.Z`, open a PR against `dev`, merge when checks
 pass.
@@ -47,8 +44,8 @@ git push origin vX.Y.Z
 ## Watch
 
 ```bash
-gh run list --repo different-ai/openwork --workflow "Release App" --limit 1
-gh run watch <run-id> --repo different-ai/openwork --exit-status --interval 90
+gh run list --repo artreimus/AgencyAI --workflow "Release App" --limit 1
+gh run watch <run-id> --repo artreimus/AgencyAI --exit-status --interval 90
 ```
 
 The run includes a Windows test job; any test failure blocks publish (the
@@ -66,7 +63,7 @@ git push origin vX.Y.Z
 **Rerun without retagging** (e.g. transient failure):
 
 ```bash
-gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
+gh workflow run "Release App" --repo artreimus/AgencyAI -f tag=vX.Y.Z
 ```
 
 ---
@@ -74,7 +71,7 @@ gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
 ## Verify
 
 ```bash
-gh release view vX.Y.Z --repo different-ai/openwork --json assets --jq '.assets[].name'
+gh release view vX.Y.Z --repo artreimus/AgencyAI --json assets --jq '.assets[].name'
 ```
 
 Expect the app assets (`openwork-<platform>-X.Y.Z.*`, `latest*.yml`) plus the
@@ -87,7 +84,7 @@ installer assets:
 Spot-check a download URL resolves (302 to release-assets CDN):
 
 ```bash
-curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/OpenWork-Installer-mac-arm64.dmg" | head -2
+curl -sI "https://github.com/artreimus/AgencyAI/releases/download/vX.Y.Z/AgencyAI-Installer-mac-arm64.dmg" | head -2
 ```
 
 ---
@@ -96,9 +93,6 @@ curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/Open
 
 - Installer fixes only reach users through a new release — the org install
   door (`/v1/install/:platform`) 302s to versioned assets.
-- den deployments built from source pick up the new pin via
-  `PUBLISHED_DESKTOP_VERSIONS[0]` (den-api `src/version.ts`); no env vars
-  required.
 - The installer job reuses the mac signing/notarization secrets and keeps the
   placeholder build-config guard (a client-configured build can never publish
   publicly).

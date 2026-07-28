@@ -17,9 +17,6 @@ set -euo pipefail
 
 REF=""
 FORCE_INSTALL=0
-DEN_BASE_URL=""
-DEN_API_BASE_URL=""
-DEN_REQUIRE_SIGNIN=0
 ARTIFACTS_ENABLED=0
 RECORD_VIDEO=0
 RECORDING_NAME=""
@@ -34,17 +31,6 @@ while [ "$#" -gt 0 ]; do
     --snapshot)
       shift
       DAYTONA_EVAL_SNAPSHOT="${1:?missing snapshot name}"
-      ;;
-    --den-base-url)
-      shift
-      DEN_BASE_URL="${1:?missing Den base URL}"
-      ;;
-    --den-api-base-url)
-      shift
-      DEN_API_BASE_URL="${1:?missing Den API base URL}"
-      ;;
-    --require-signin)
-      DEN_REQUIRE_SIGNIN=1
       ;;
     --artifacts-volume)
       ARTIFACTS_ENABLED=1
@@ -89,16 +75,16 @@ if [ -z "$REF" ]; then
   REF="${REF:-$(git rev-parse HEAD)}"
 fi
 
-SANDBOX="openwork-test-$(date +%Y%m%d-%H%M%S)"
+SANDBOX="agencyai-test-$(date +%Y%m%d-%H%M%S)"
 CDP_PORT=9825
 NOVNC_PORT=6080
 ARTIFACTS_PORT=8090
 MAX_WAIT=90
-DAYTONA_EVAL_SNAPSHOT="${DAYTONA_EVAL_SNAPSHOT:-openwork-eval-vnc}"
-DAYTONA_SECRETS_VOLUME="${DAYTONA_SECRETS_VOLUME:-openwork-eval-secrets}"
+DAYTONA_EVAL_SNAPSHOT="${DAYTONA_EVAL_SNAPSHOT:-agencyai-eval-vnc}"
+DAYTONA_SECRETS_VOLUME="${DAYTONA_SECRETS_VOLUME:-agencyai-eval-secrets}"
 DAYTONA_SECRETS_MOUNT="${DAYTONA_SECRETS_MOUNT:-/daytona-secrets}"
 DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-${DAYTONA_SECRETS_MOUNT}}"
-DAYTONA_ARTIFACTS_VOLUME="${DAYTONA_ARTIFACTS_VOLUME:-openwork-eval-artifacts}"
+DAYTONA_ARTIFACTS_VOLUME="${DAYTONA_ARTIFACTS_VOLUME:-agencyai-eval-artifacts}"
 DAYTONA_ARTIFACTS_MOUNT="${DAYTONA_ARTIFACTS_MOUNT:-/daytona-artifacts}"
 DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS="${DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS:---disable-gpu --disable-dev-shm-usage --enable-unsafe-swiftshader}"
 OPENWORK_ELECTRON_FAKE_MEDIA="${OPENWORK_ELECTRON_FAKE_MEDIA:-0}"
@@ -220,8 +206,8 @@ echo "==> Checking out $REF..."
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; REF=\"$REF\"; FORCE_INSTALL=\"$FORCE_INSTALL\"; PNPM_STORE=/workspace/.openwork-daytona/pnpm-store; if git fetch origin \"\$REF\"; then git checkout --detach FETCH_HEAD; else git fetch origin dev --depth 50 || true; git checkout \"\$REF\"; fi; git rev-parse --short HEAD; mkdir -p \"\$PNPM_STORE\" .openwork-daytona; baseline=.openwork-daytona/pnpm-lock.sha256; current=\$(sha256sum pnpm-lock.yaml | cut -d \" \" -f 1); if [ \"\$FORCE_INSTALL\" = 1 ] || [ ! -d node_modules ] || [ ! -f \"\$baseline\" ] || [ \"\$(cat \"\$baseline\")\" != \"\$current\" ]; then echo \"==> Installing deps (missing node_modules, lockfile changed, or forced)...\"; CI=1 pnpm install --store-dir \"\$PNPM_STORE\" --frozen-lockfile || CI=1 pnpm install --store-dir \"\$PNPM_STORE\"; printf \"%s\" \"\$current\" > \"\$baseline\"; else echo \"==> Skipping pnpm install (node_modules present and lockfile unchanged).\"; fi'"
 
 echo ""
-echo "==> Starting OpenWork sandbox dev stack..."
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_BASE_URL=\"$DEN_BASE_URL\"; DEN_API_BASE_URL=\"$DEN_API_BASE_URL\"; DEN_REQUIRE_SIGNIN=\"$DEN_REQUIRE_SIGNIN\"; if [ -n \"\$DEN_BASE_URL\" ] || [ -n \"\$DEN_API_BASE_URL\" ] || [ \"\$DEN_REQUIRE_SIGNIN\" = 1 ]; then mkdir -p /workspace/.openwork-daytona; DEN_BASE_URL=\"\$DEN_BASE_URL\" DEN_API_BASE_URL=\"\$DEN_API_BASE_URL\" DEN_REQUIRE_SIGNIN=\"\$DEN_REQUIRE_SIGNIN\" node -e '\''const fs = require(\"node:fs\"); const baseUrl = process.env.DEN_BASE_URL || \"https://app.openworklabs.com\"; const apiBaseUrl = process.env.DEN_API_BASE_URL || null; const requireSignin = process.env.DEN_REQUIRE_SIGNIN === \"1\"; fs.writeFileSync(\"/workspace/.openwork-daytona/desktop-bootstrap.json\", JSON.stringify({ baseUrl, apiBaseUrl, requireSignin }, null, 2) + \"\\n\");'\''; fi; export DAYTONA_SECRETS_ENV=\"$DAYTONA_SECRETS_ENV\" DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS=\"$DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS\" OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=$CDP_PORT OPENWORK_ELECTRON_FAKE_MEDIA=\"$OPENWORK_ELECTRON_FAKE_MEDIA\" OPENWORK_WORKSPACE_DIR=/workspace OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT=1; if [ -f /workspace/.openwork-daytona/desktop-bootstrap.json ]; then export OPENWORK_DESKTOP_BOOTSTRAP_PATH=/workspace/.openwork-daytona/desktop-bootstrap.json; fi; pnpm dev:sandbox'"
+echo "==> Starting AgencyAI sandbox dev stack..."
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; export DAYTONA_SECRETS_ENV=\"$DAYTONA_SECRETS_ENV\" DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS=\"$DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS\" OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=$CDP_PORT OPENWORK_ELECTRON_FAKE_MEDIA=\"$OPENWORK_ELECTRON_FAKE_MEDIA\" OPENWORK_WORKSPACE_DIR=/workspace; pnpm dev:sandbox'"
 
 echo ""
 echo "==> Waiting for Electron CDP on port $CDP_PORT (up to ${MAX_WAIT}s)..."
@@ -263,10 +249,6 @@ else
 fi
 
 echo "==> Secrets env: ${DAYTONA_SECRETS_ENV} (file or directory, sourced if present)"
-if [ -n "$DEN_BASE_URL" ]; then
-  echo "==> Den base URL: $DEN_BASE_URL"
-fi
-
 CDP_URL=$(daytona preview-url "$SANDBOX" -p "$CDP_PORT" 2>/dev/null | grep -v "^time=")
 NOVNC_URL=$(daytona preview-url "$SANDBOX" -p "$NOVNC_PORT" 2>/dev/null | grep -v "^time=")
 ARTIFACTS_URL=""

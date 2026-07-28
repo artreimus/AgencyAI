@@ -18,7 +18,7 @@ and bug reproduction.
 ## Fastest path: the script
 
 Run the helper script from the repo root. It creates a Daytona VNC-capable
-sandbox from the reusable `openwork-eval-vnc` snapshot when present, checks out
+sandbox from the reusable `agencyai-eval-vnc` snapshot when present, checks out
 the ref, conditionally installs deps, starts XFCE/noVNC, Vite, Electron, and
 waits for CDP:
 
@@ -42,35 +42,31 @@ codified yet. If the behavior is PR evidence and repeatable, add a flow under
 Use `browser_list` to connect when manual inspection is needed.
 Refresh the snapshot with `bash .devcontainer/create-daytona-openwork-snapshot.sh`
 when dependencies or base setup change. The snapshot excludes `node_modules`;
-dependency installs reuse the `openwork-eval-pnpm-store` volume.
+dependency installs reuse `/workspace/.openwork-daytona/pnpm-store` inside the
+sandbox.
 For provider flows, create/populate the reusable secrets volume once with
 `bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken`; future Daytona
-sandboxes mount `openwork-eval-secrets:/daytona-secrets` automatically and
+sandboxes mount `agencyai-eval-secrets:/daytona-secrets` automatically and
 source every `/daytona-secrets/*.env` file before Electron starts.
 
 ## Related Daytona Skills
 
 - `daytona-flow-validator`: pass/fail validation with a strict observe -> act
   -> observe/assert -> evidence loop.
-- `daytona-cloud-server`: Den Web/API, worker proxy, marketplace, cloud auth,
-  and org policy server setup.
-- `daytona-electron-den`: two-sandbox server + Electron validation.
 - `daytona-chrome-cdp`: standalone Chrome in Daytona for web sign-in and OAuth.
 - `daytona-secrets-volume`: provider keys and eval-only secrets in
-  `openwork-eval-secrets:/daytona-secrets`.
+  `agencyai-eval-secrets:/daytona-secrets`.
 - `daytona-recording-artifacts`: screenshots, recordings, validation artifacts,
   before/after videos, and PR evidence.
 
 ## Daytona Testing Toolbox
 
-- **Cloud server:** use `.devcontainer/test-server-on-daytona.sh` for Den Web,
-  Den API, worker proxy, org policies, marketplace, and cloud auth flows.
-- **Secrets volume:** use `openwork-eval-secrets:/daytona-secrets` for provider
+- **Secrets volume:** use `agencyai-eval-secrets:/daytona-secrets` for provider
   keys and eval-only credentials. Add more files with
   `bash .devcontainer/setup-daytona-secrets-volume.sh <local-env> <name>.env`.
 - **Electron sandbox:** use `.devcontainer/test-on-daytona.sh` for the real
   desktop app, noVNC visual access, and CDP automation on port 9825.
-- **Artifacts volume:** use `openwork-eval-artifacts:/daytona-artifacts` for
+- **Artifacts volume:** use `agencyai-eval-artifacts:/daytona-artifacts` for
   screenshots, validation notes, and recordings that survive sandbox deletion.
 
 Validation standard: use `daytona-flow-validator`. Default proof format is
@@ -356,7 +352,7 @@ bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken
 bash .devcontainer/setup-daytona-secrets-volume.sh .anthropic anthropic.env
 ```
 
-Every Daytona eval sandbox mounts `openwork-eval-secrets:/daytona-secrets` and
+Every Daytona eval sandbox mounts `agencyai-eval-secrets:/daytona-secrets` and
 `/opt/openwork-daytona/start-daytona-electron.sh` sources every
 `/daytona-secrets/*.env` file before Electron starts. Keep provider keys, test
 OAuth credentials, and other eval-only secrets there instead of workspace files.
@@ -384,42 +380,6 @@ Always use two separate `daytona exec` calls with a `sleep` between them.
 | noVNC     | 6080 | See the Electron app visually            |
 | Vite HMR  | 5173 | React UI hot reload                      |
 | CDP       | 9825 | Chrome DevTools Protocol for automation  |
-| Den Web   | 3005 | Admin dashboard (needs MySQL)            |
-| Den API   | 8788 | Control plane (needs MySQL)              |
-
-## Two-sandbox Den + Electron marketplace evals
-
-Use `daytona-electron-den` when testing Cloud Marketplace, desktop policies, or
-org-managed extension flows end-to-end. Keep this section as a quick reference
-only.
-
-1. Start the Den server sandbox:
-```bash
-bash .devcontainer/test-server-on-daytona.sh <branch-or-commit>
-```
-
-2. Seed the server sandbox with demo org, marketplace, and plugin data. The seed
-must use the same encryption key as `.devcontainer/start-daytona-server.sh`, and
-`@openwork/email` must be built before the seed imports Den email helpers:
-```bash
-daytona exec <server-sandbox> -- 'cd /workspace && pnpm --filter @openwork/email build && cd /workspace/ee/apps/den-api && OPENWORK_DEV_MODE=1 DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den DEN_DB_ENCRYPTION_KEY=daytona-den-db-encryption-key-please-change-1234567890 BETTER_AUTH_SECRET=local-dev-secret-not-for-production-use!! BETTER_AUTH_URL=http://localhost:3005 pnpm exec tsx scripts/seed-demo-org.ts --reset'
-```
-
-3. Start Electron against the printed Den Web/API URLs:
-```bash
-bash .devcontainer/test-on-daytona.sh <branch-or-commit> --den-base-url <DEN_WEB_URL> --den-api-base-url <DEN_API_URL> --record-video --recording-name <name>
-```
-
-4. Sign in from Electron using the seeded demo account. Create a desktop handoff
-grant from the Den API, paste the `openwork://den-auth?...` URL into Cloud
-Account -> `Paste sign-in code`, and choose `Acme Robotics`:
-```bash
-TOKEN=$(curl -s -X POST '<DEN_API_URL>/api/auth/sign-in/email' -H 'content-type: application/json' --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}' | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')
-curl -s -X POST '<DEN_API_URL>/v1/auth/desktop-handoff' -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' --data '{"desktopScheme":"openwork"}'
-```
-
-5. Open Settings -> Extensions -> Marketplace and run the marketplace install,
-remove, search, and filter flows against the seeded marketplace packages.
 
 ## Troubleshooting
 
@@ -486,7 +446,7 @@ daytona exec "$SANDBOX" -- "bash -lc 'pkill -f electron || true; pkill -f electr
 
 Use this workflow to capture a BEFORE recording on the current branch, switch
 to a feature branch on the same sandbox, and capture an AFTER recording. Both
-recordings are saved to the persistent `openwork-eval-artifacts` volume and
+recordings are saved to the persistent `agencyai-eval-artifacts` volume and
 survive sandbox deletion.
 
 ### Step 1: Start the sandbox with BEFORE recording
@@ -589,7 +549,7 @@ screenshot, then continue the recording.
 
 ### Notes
 
-- Recordings are stored on the `openwork-eval-artifacts` Daytona volume (5 GB,
+- Recordings are stored on the `agencyai-eval-artifacts` Daytona volume (5 GB,
   reusable across sandboxes). They persist after `daytona delete`.
 - The `start-daytona-recording.sh` script records to a temp file first, then
   copies to the artifacts volume on stop — this avoids NFS write issues.
