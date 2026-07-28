@@ -13,6 +13,7 @@ import type {
 import {
   Bot,
   FolderLock,
+  Info,
   Paintbrush,
   Plug,
   Settings,
@@ -24,9 +25,11 @@ import { Button } from "@/components/ui/button";
 import { t, currentLocale, setLocale, type Language } from "@/i18n";
 import type { McpDirectoryInfo } from "@/app/constants";
 import {
+  appBuildInfo,
   openworkServerInfo,
   workspaceBootstrap,
   workspaceSetSelected,
+  type AppBuildInfo,
   type WorkspaceInfo,
 } from "@/app/lib/desktop";
 import { createClient, unwrap, waitForHealthy } from "@/app/lib/opencode";
@@ -45,7 +48,6 @@ import type {
   McpStatus,
   McpStatusMap,
   ProviderListItem,
-  SettingsTab,
 } from "@/app/types";
 import { getInitialThemeMode, setThemeMode, type ThemeMode } from "@/app/theme";
 import { fetchProviderList, getConnectedProviderItems } from "@/react-app/infra/provider-list-query";
@@ -61,9 +63,12 @@ import { McpAuthModal } from "@/react-app/domains/connections/mcp-auth-modal";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import { usePlatform } from "@/react-app/kernel/platform";
 import { useBootState } from "./boot-state";
+import { LocalAboutView } from "./local-about-view";
 import {
   LOCAL_SETTINGS_TABS,
+  type LocalSettingsTab,
   isLocalSettingsTab,
   neutralMonogram,
   projectLocalWorkspaces,
@@ -269,19 +274,21 @@ function mcpDirectoryInfo(entry: McpServerEntry): McpDirectoryInfo {
   };
 }
 
-function tabIcon(tab: SettingsTab) {
+function tabIcon(tab: LocalSettingsTab) {
   if (tab === "ai") return Bot;
   if (tab === "permissions") return FolderLock;
   if (tab === "extensions") return Plug;
   if (tab === "appearance") return Paintbrush;
+  if (tab === "about") return Info;
   return Settings;
 }
 
-function tabLabel(tab: SettingsTab) {
+function tabLabel(tab: LocalSettingsTab) {
   if (tab === "ai") return "AI Providers";
   if (tab === "permissions") return "Authorized folders";
   if (tab === "extensions") return "Extensions";
   if (tab === "appearance") return "Appearance";
+  if (tab === "about") return "About & Licenses";
   return "General";
 }
 
@@ -313,13 +320,14 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
   const location = useLocation();
   const params = useParams<{ workspaceId?: string }>();
   const local = useLocal();
+  const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const requestedWorkspaceId =
     props.workspaceId?.trim() ||
     params.workspaceId?.trim() ||
     readActiveWorkspaceId() ||
     "";
-  const [embeddedTab, setEmbeddedTab] = useState<SettingsTab>(() =>
+  const [embeddedTab, setEmbeddedTab] = useState<LocalSettingsTab>(() =>
     resolveLocalSettingsTab(`/settings/${props.initialPath ?? "general"}`),
   );
   const activeTab = props.embedded
@@ -331,6 +339,7 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
   const [runtime, setRuntime] = useState<LocalRuntime>(EMPTY_RUNTIME);
   const [loading, setLoading] = useState(true);
   const [providerData, setProviderData] = useState<ProviderListResponse | null>(null);
+  const [buildInfo, setBuildInfo] = useState<AppBuildInfo | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
@@ -345,7 +354,7 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(false);
 
-  const navigateTab = useCallback((tab: SettingsTab) => {
+  const navigateTab = useCallback((tab: LocalSettingsTab) => {
     if (!isLocalSettingsTab(tab)) return;
     if (props.embedded) {
       setEmbeddedTab(tab);
@@ -358,6 +367,20 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
         : `/settings/${tab}`,
     );
   }, [navigate, props.embedded, requestedWorkspaceId, runtime.selectedWorkspace?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void appBuildInfo()
+      .then((value) => {
+        if (!cancelled) setBuildInfo(value);
+      })
+      .catch(() => {
+        if (!cancelled) setBuildInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const refreshRuntime = useCallback(async () => {
     setLoading(true);
@@ -681,6 +704,12 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
             description="Choose theme, language, and window preferences."
             onClick={() => navigateTab("appearance")}
           />
+          <SettingsCard
+            icon={Info}
+            title="About & Licenses"
+            description="Review build details and open-source notices."
+            onClick={() => navigateTab("about")}
+          />
         </div>
       );
     }
@@ -824,6 +853,14 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
           setLanguage={setLocale}
           hideTitlebar={hideTitlebar}
           toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
+        />
+      );
+    }
+    if (activeTab === "about") {
+      return (
+        <LocalAboutView
+          buildInfo={buildInfo}
+          onOpenLink={(url) => platform.openLink(url)}
         />
       );
     }

@@ -115,6 +115,39 @@ test("local-mvp packages only the reviewed OpenCode plugin allowlist", async () 
   assert.equal(pluginResource?.filter.includes("*.js"), false);
 });
 
+test("local-mvp packages only curated AgencyAI docs and the two project licenses", async () => {
+  const { AGENCYAI_DOC_FILES } = await import("./stage-agencyai-docs.mjs");
+  const profile = await configModule.loadSelectedProductProfile();
+  const config = configModule.createElectronBuilderConfig(profile);
+  const docsResource = config.extraResources.find(
+    (entry) => entry.to === "agencyai-docs",
+  );
+  const licenseResources = config.extraResources
+    .filter((entry) => String(entry.to).startsWith("licenses/"))
+    .map((entry) => ({ from: entry.from, to: entry.to }));
+
+  assert.deepEqual(configModule.AGENCYAI_DOC_FILES, AGENCYAI_DOC_FILES);
+  assert.deepEqual(docsResource, {
+    from: ".generated/agencyai-docs",
+    to: "agencyai-docs",
+    filter: [...AGENCYAI_DOC_FILES],
+  });
+  assert.equal(
+    config.extraResources.some((entry) => entry.to === "openwork-docs"),
+    false,
+  );
+  assert.deepEqual(licenseResources, [
+    {
+      from: "resources/licenses/OPENWORK-LICENSE.txt",
+      to: "licenses/OPENWORK-LICENSE.txt",
+    },
+    {
+      from: "resources/licenses/OPENCODE-LICENSE.txt",
+      to: "licenses/OPENCODE-LICENSE.txt",
+    },
+  ]);
+});
+
 test("platform identity, helper IDs, NSIS identity, and Linux desktop filename are stable", async () => {
   const profile = await configModule.loadSelectedProductProfile();
   const config = configModule.createElectronBuilderConfig(profile);

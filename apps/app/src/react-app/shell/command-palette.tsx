@@ -94,6 +94,9 @@ export type CommandPaletteProps = {
   selectedModelLabel?: string;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
+  /** Product-owned support destinations. Null omits the command entirely. */
+  documentationUrl?: string | null;
+  feedbackUrl?: string | null;
   /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
   accessibleTargets?: AccessibleTargetOption[];
   onOpenAccessibleTarget?: (target: AccessibleTargetOption) => void;
@@ -247,24 +250,28 @@ export function CommandPalette(props: CommandPaletteProps) {
     // missing after the React port. Each one mirrors one of the icons at
     // the bottom-right of the session surface (documentation / feedback)
     // plus every settings tab the user is likely to reach for.
-    {
-      id: "open-docs",
-      title: t("session.support_docs"),
-      meta: t("session.cmd_settings_meta"),
-      action: () => {
-        props.onClose();
-        openUrl("https://openwork.dev/docs");
-      },
-    },
-    {
-      id: "open-feedback",
-      title: t("session.support_feedback"),
-      meta: t("session.cmd_settings_meta"),
-      action: () => {
-        props.onClose();
-        openUrl("https://openwork.dev/feedback");
-      },
-    },
+    ...(props.documentationUrl
+      ? [{
+          id: "open-docs",
+          title: t("session.support_docs"),
+          meta: t("session.cmd_settings_meta"),
+          action: () => {
+            props.onClose();
+            openUrl(props.documentationUrl!);
+          },
+        }]
+      : []),
+    ...(props.feedbackUrl
+      ? [{
+          id: "open-feedback",
+          title: t("session.support_feedback"),
+          meta: t("session.cmd_settings_meta"),
+          action: () => {
+            props.onClose();
+            openUrl(props.feedbackUrl!);
+          },
+        }]
+      : []),
     {
       id: "settings-extensions",
       title: t("settings.tab_extensions"),

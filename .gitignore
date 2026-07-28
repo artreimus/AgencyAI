@@ -20,6 +20,7 @@ _worktrees/
 apps/desktop/resources/sidecars/
 apps/desktop/resources/toolchain/
 apps/desktop/server/
+apps/desktop/.generated/
 
 # Env
 .env

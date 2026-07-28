@@ -30,6 +30,8 @@ describe("AgencyAI local capabilities plugin", () => {
     expect(prompt).toContain("MCP servers");
     expect(prompt).toContain("Skills");
     expect(prompt).toContain("artifacts");
+    expect(prompt).toContain("agencyai_docs_search");
+    expect(prompt).toContain("agencyai_docs_read");
     for (const forbidden of FORBIDDEN_LOCAL_STEERING) {
       expect(prompt.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
@@ -38,5 +40,46 @@ describe("AgencyAI local capabilities plugin", () => {
     const output = { system: [] as string[] };
     await plugin["experimental.chat.system.transform"]({}, output);
     expect(output.system).toEqual([prompt]);
+  });
+
+  test("searches and reads only the curated local documentation", async () => {
+    const plugin = await AgencyAiLocalCapabilities();
+    const search = JSON.parse(
+      await plugin.tool.agencyai_docs_search.execute({
+        query: "configure provider API key",
+      }),
+    );
+    expect(search.ok).toBe(true);
+    expect(search.matches[0]?.path).toBe("providers.mdx");
+
+    const page = JSON.parse(
+      await plugin.tool.agencyai_docs_read.execute({
+        path: "providers.mdx",
+      }),
+    );
+    expect(page.path).toBe("providers.mdx");
+    expect(page.content).toContain("Settings → AI Providers");
+    expect(page.content).not.toContain("OpenWork");
+
+    const hosted = JSON.parse(
+      await plugin.tool.agencyai_docs_search.execute({
+        query: "OpenWork Cloud Den organization team",
+      }),
+    );
+    expect(hosted.matches).toEqual([]);
+  });
+
+  test("rejects traversal and unknown documentation paths", async () => {
+    const plugin = await AgencyAiLocalCapabilities();
+    await expect(
+      plugin.tool.agencyai_docs_read.execute({
+        path: "../providers.mdx",
+      }),
+    ).rejects.toThrow("Invalid docs path");
+    await expect(
+      plugin.tool.agencyai_docs_read.execute({
+        path: "missing.mdx",
+      }),
+    ).rejects.toThrow("AgencyAI docs page not found");
   });
 });

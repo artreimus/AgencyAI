@@ -396,7 +396,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 type="button"
                 className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
                 onClick={hideOpenWorkModels}
-                aria-label="Hide OpenWork Models"
+                aria-label="Hide AgencyAI Models"
               >
                 <X className="size-3.5" />
               </button>

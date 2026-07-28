@@ -2322,7 +2322,7 @@ export function createRuntimeManager({
         status: -1,
         stdout: "",
         stderr:
-          "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.",
+          "Guided install is not supported on Windows yet. Install the AgencyAI-pinned OpenCode version manually, then restart AgencyAI.",
       };
     }
 

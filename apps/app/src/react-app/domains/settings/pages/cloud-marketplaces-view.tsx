@@ -284,7 +284,7 @@ export function CloudMarketplacesView({
       return {
         source: "built-in",
         marketplaceId: "openwork-builtins",
-        marketplaceName: "OpenWork Built-ins",
+        marketplaceName: "AgencyAI Built-ins",
         entry,
         active,
         status: item?.installState ?? (active ? "installed" : "available"),
@@ -341,7 +341,7 @@ export function CloudMarketplacesView({
 
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
-      ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "OpenWork Built-ins" }] : []),
+      ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "AgencyAI Built-ins" }] : []),
       ...(includeCloudMarketplaceRows ? marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })) : []),
       ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: "Organization MCP Connections" }] : []),
     ] : [],

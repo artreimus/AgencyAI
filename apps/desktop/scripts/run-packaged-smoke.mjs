@@ -22,6 +22,10 @@ import {
 import {
   loadPackagedRuntimeIntegritySync,
 } from "../electron/opencode-distribution.mjs";
+import {
+  AGENCYAI_DOC_FILES,
+  validateAgencyAiDocs,
+} from "./stage-agencyai-docs.mjs";
 
 const require = createRequire(import.meta.url);
 const {
@@ -96,6 +100,18 @@ async function regularNonSymlinkFile(filePath, label) {
   const fileStat = await lstat(filePath);
   assert(fileStat.isFile() && !fileStat.isSymbolicLink(), `${label} must be a regular non-symlink file`);
   return filePath;
+}
+
+async function assertMissing(filePath, label) {
+  try {
+    await lstat(filePath);
+  } catch (error) {
+    if (error && typeof error === "object" && Reflect.get(error, "code") === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  throw new Error(`${label} must be absent`);
 }
 
 async function walkFiles(root) {
@@ -392,6 +408,26 @@ async function inspectPackagedLayout(appPath, profile) {
     "packaged runtime integrity",
   );
 
+  const docsDirectory = path.join(resources, "agencyai-docs");
+  validateAgencyAiDocs(docsDirectory);
+  const docsFiles = (await readdir(docsDirectory)).sort();
+  assert(
+    JSON.stringify(docsFiles) === JSON.stringify([...AGENCYAI_DOC_FILES]),
+    `Packaged AgencyAI docs closure mismatch: ${docsFiles.join(", ")}`,
+  );
+  await assertMissing(
+    path.join(resources, "openwork-docs"),
+    "raw upstream docs tree",
+  );
+  await regularNonSymlinkFile(
+    path.join(resources, "licenses", "OPENWORK-LICENSE.txt"),
+    "OpenWork MIT license",
+  );
+  await regularNonSymlinkFile(
+    path.join(resources, "licenses", "OPENCODE-LICENSE.txt"),
+    "OpenCode MIT license",
+  );
+
   const pluginDirectory = path.join(resources, "opencode-plugins");
   const pluginFiles = (await readdir(pluginDirectory)).sort();
   assert(
@@ -400,6 +436,46 @@ async function inspectPackagedLayout(appPath, profile) {
         EXPECTED_PLUGIN_NAMES.map((name) => `${name}.js`).sort(),
       ),
     `Packaged plugin closure mismatch: ${pluginFiles.join(", ")}`,
+  );
+  const localCapabilitiesModule = await import(
+    pathToFileURL(
+      path.join(pluginDirectory, "agencyai-local-capabilities.js"),
+    ).href
+  );
+  assert(
+    typeof localCapabilitiesModule.AgencyAiLocalCapabilities === "function",
+    "Packaged AgencyAI local capabilities plugin has no factory export",
+  );
+  const localCapabilities =
+    await localCapabilitiesModule.AgencyAiLocalCapabilities();
+  const docsSearch = JSON.parse(
+    await localCapabilities.tool.agencyai_docs_search.execute({
+      query: "configure provider API key",
+    }),
+  );
+  assert(
+    docsSearch.matches?.[0]?.path === "providers.mdx",
+    "Packaged AgencyAI docs search did not resolve providers.mdx",
+  );
+  const docsRead = JSON.parse(
+    await localCapabilities.tool.agencyai_docs_read.execute({
+      path: "providers.mdx",
+    }),
+  );
+  assert(
+    typeof docsRead.content === "string"
+      && docsRead.content.includes("Settings → AI Providers"),
+    "Packaged AgencyAI docs read did not return the curated provider guide",
+  );
+  const hostedDocsSearch = JSON.parse(
+    await localCapabilities.tool.agencyai_docs_search.execute({
+      query: "OpenWork Cloud Den organization team",
+    }),
+  );
+  assert(
+    Array.isArray(hostedDocsSearch.matches)
+      && hostedDocsSearch.matches.length === 0,
+    "Packaged AgencyAI docs exposed hosted-product guidance",
   );
 
   const sidecar = await regularNonSymlinkFile(
@@ -488,6 +564,10 @@ async function inspectPackagedLayout(appPath, profile) {
     executable,
     resources,
     pluginDirectory,
+    docsFiles,
+    docsSearch,
+    docsRead,
+    hostedDocsSearch,
     sidecar,
     ripgrep,
     helper,
@@ -599,7 +679,7 @@ async function createServerWorkspace(serverInfo, workspacePath) {
       },
       body: JSON.stringify({
         folderPath: workspacePath,
-        name: "AgencyAI PR05 packaged smoke",
+        name: "AgencyAI packaged smoke",
         preset: "starter",
       }),
     },
@@ -631,7 +711,7 @@ export async function stopChild(child) {
 
 async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
-    throw new Error("PR05 packaged smoke requires macOS arm64");
+    throw new Error("AgencyAI packaged smoke requires macOS arm64");
   }
   const profile = JSON.parse(await readFile(profilePath, "utf8"));
   const appPath = await resolvePackagedMacApp(requestedAppPath);
@@ -661,7 +741,7 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
 
   const fixture = await startFixtureServer();
   const workspacePath = await realpath(await mkdtemp(
-    path.join(tmpdir(), "agencyai-pr05-packaged-"),
+    path.join(tmpdir(), "agencyai-packaged-"),
   ));
   let child = null;
   let client = null;
@@ -968,6 +1048,16 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
         permissionCheckExecuted: true,
       },
       fuses: "hardened",
+      docs: {
+        files: layout.docsFiles,
+        search: layout.docsSearch.matches[0].path,
+        read: layout.docsRead.path,
+        hostedMatches: layout.hostedDocsSearch.matches.length,
+      },
+      licenses: [
+        "OPENWORK-LICENSE.txt",
+        "OPENCODE-LICENSE.txt",
+      ],
       packagedPlugins: EXPECTED_PLUGIN_NAMES,
       serverWorkspaceRemoved,
     };

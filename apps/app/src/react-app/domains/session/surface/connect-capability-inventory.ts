@@ -101,7 +101,7 @@ function remoteMcpStatus(
       ? "Organization setup is required."
       : plugin.cloudReadiness?.state === "not_synced"
         ? "Marketplace content has not synced yet."
-        : "This OpenWork Connect capability is not ready.",
+        : "This AgencyAI Connect capability is not ready.",
   };
 }
 

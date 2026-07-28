@@ -61,9 +61,11 @@ export function LocalAccountStatusMenu(props: AccountStatusMenuProps) {
             aria-label={`${PRODUCT.brand.name} local runtime and settings`}
             title={runtime.label}
           >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-              AI
-            </span>
+            <img
+              src="/agencyai-mark.svg"
+              alt=""
+              className="size-6 shrink-0 rounded-lg"
+            />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12px] font-medium text-sidebar-foreground">
                 {PRODUCT.brand.name}

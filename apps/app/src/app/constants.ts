@@ -156,6 +156,9 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
+      if (import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE === "local-mvp") {
+        return "http://127.0.0.1:1/disabled-cloud";
+      }
       // The desktop app connects to the minimal, harness-facing surface
       // (/mcp/agent: search_capabilities + execute_capability only), not the
       // full catalog at bare /mcp. getDenMcpUrl heals stale web-app origins;
@@ -170,7 +173,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     type: "remote",
     oauth: true,
     kind: "mcp",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/agencyai-mark.svg",
     // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
     // configured + enabled while signed in to OpenWork Cloud. Hidden from the
     // default catalog; "Show hidden" reveals it.
@@ -185,7 +188,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     command: ["npx", "-y", "openwork-ui-mcp"],
     oauth: false,
     kind: "ui-control",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/agencyai-mark.svg",
     // Internal UI-control surface for agents driving the desktop app. Hidden
     // from the default catalog; "Show hidden" reveals it.
     defaultHidden: true,

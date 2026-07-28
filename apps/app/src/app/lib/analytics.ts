@@ -25,7 +25,10 @@ const ANALYTICS_ENABLED =
 const ENV_POSTHOG_HOST = String(import.meta.env.VITE_OPENWORK_POSTHOG_HOST ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
 
-const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
+const DEFAULT_POSTHOG_HOST =
+  import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE === "local-mvp"
+    ? ""
+    : "https://us.i.posthog.com";
 
 // Packaged releases use the default publishable key; dev builds stay silent
 // unless VITE_OPENWORK_POSTHOG_KEY is set. Set it to "" to disable analytics

@@ -2,8 +2,6 @@
 import { useState } from "react";
 import { Zap } from "lucide-react";
 
-import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
-import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
 
 type HeroSuggestion = {
@@ -14,9 +12,9 @@ type HeroSuggestion = {
 
 const DEFAULT_SUGGESTIONS: HeroSuggestion[] = [
   {
-    title: "Summarize my week",
-    description: "Pull highlights from email and calendar.",
-    prompt: "Summarize my week: pull the highlights from my connected email and calendar and give me a short digest of what happened and what needs my attention.",
+    title: "Summarize this workspace",
+    description: "Review local files and surface the important points.",
+    prompt: "Review the files in this workspace and give me a concise summary of the project, its current state, and the next three useful actions.",
   },
   {
     title: "Clean up a spreadsheet",
@@ -48,27 +46,10 @@ export type SessionEmptyHeroProps = {
 
 /**
  * Paper "first chat" empty state: the real session composer front and
- * center with suggestion cards below. Suggestions come from desktop
- * policies (organization onboarding prompts) when configured, with
- * built-in defaults otherwise.
+ * center with local-first suggestion cards below.
  */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const [prompt, setPrompt] = useState("");
-  const orgRestrictions = useOrgRestrictions();
-  const checkDesktopRestriction = useCheckDesktopRestriction();
-  const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
-
-  const organizationPrompts = orgRestrictions.onboardingPrompts;
-  const suggestions: HeroSuggestion[] = organizationPrompts !== undefined
-    ? organizationPrompts.map((orgPrompt, index) => {
-      const card = resolveOrganizationPromptCardContent({
-        prompt: orgPrompt,
-        description: orgRestrictions.onboardingPromptDescriptions?.[index],
-        index,
-      });
-      return { title: card.title, description: card.description, prompt: card.selectionPrompt };
-    })
-    : DEFAULT_SUGGESTIONS;
 
   const submit = () => {
     const trimmedPrompt = prompt.trim();
@@ -98,7 +79,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         context={props.composer ?? null}
       />
 
-      {canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? (
+      {props.providerCount === 0 && props.onOpenProviderAuth ? (
         <button
           type="button"
           className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
@@ -115,7 +96,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       ) : null}
 
       <div className="grid gap-2 sm:grid-cols-2">
-        {suggestions.map((suggestion) => (
+        {DEFAULT_SUGGESTIONS.map((suggestion) => (
           <button
             key={suggestion.title}
             type="button"

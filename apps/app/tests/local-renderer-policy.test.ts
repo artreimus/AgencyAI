@@ -17,6 +17,7 @@ describe("local renderer policy", () => {
     expect(new Set(LOCAL_CONTROL_ACTION_IDS).size).toBe(LOCAL_CONTROL_ACTION_IDS.length);
     expect(LOCAL_CONTROL_ACTION_IDS).toContain("composer.send");
     expect(LOCAL_CONTROL_ACTION_IDS).toContain("settings.provider.add");
+    expect(LOCAL_CONTROL_ACTION_IDS).toContain("route.settings.about");
     expect(LOCAL_CONTROL_ACTION_IDS).not.toContain("auth.status");
     expect(LOCAL_CONTROL_ACTION_IDS).not.toContain("auth.exchange-grant");
     expect(LOCAL_CONTROL_ACTION_IDS.some((id) => id.startsWith("voice."))).toBe(false);
@@ -28,6 +29,7 @@ describe("local renderer policy", () => {
   test("keeps local settings separate from every disabled cloud/update tab", () => {
     expect(LOCAL_SETTINGS_TABS).toContain("ai");
     expect(LOCAL_SETTINGS_TABS).toContain("extensions");
+    expect(LOCAL_SETTINGS_TABS).toContain("about");
     expect(LOCAL_SETTINGS_TABS).not.toContain("updates");
     expect(LOCAL_DISABLED_SETTINGS_TABS).toEqual([
       "cloud-account",
@@ -56,6 +58,7 @@ describe("local renderer policy", () => {
     expect(resolveLocalRendererRedirect("/settings/ai")).toBeNull();
     expect(resolveLocalSettingsTab("/settings/connect")).toBe("general");
     expect(resolveLocalSettingsTab("/settings/ai")).toBe("ai");
+    expect(resolveLocalSettingsTab("/settings/about")).toBe("about");
     expect(resolveLocalSettingsTab("/settings/not-real")).toBe("general");
   });
 

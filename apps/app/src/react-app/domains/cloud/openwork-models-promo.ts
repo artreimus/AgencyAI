@@ -15,9 +15,11 @@ import { useSyncExternalStore } from "react";
 
 const OPENWORK_MODELS_ENABLED =
   getCompiledRendererProductProfile().features.openworkModels;
+const COMPILED_LOCAL_MVP =
+  import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE === "local-mvp";
 
 export const OPENWORK_MODELS_PROVIDER_ID = "openwork";
-export const OPENWORK_MODELS_PROVIDER_NAME = "OpenWork Models";
+export const OPENWORK_MODELS_PROVIDER_NAME = "AgencyAI Models";
 export const OPENWORK_MODELS_PROMO_HIDDEN_KEY = "openwork.openworkModelsPromo.hidden";
 export const OPENWORK_MODELS_PROMO_LAST_SHOWN_KEY = "openwork.openworkModelsPromo.lastShownAt";
 export const OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY = "openwork.openworkModelsPromo.startupShown";
@@ -63,15 +65,16 @@ export type OpenWorkModelPreview = {
   subtitle: string;
 };
 
-export const OPENWORK_MODEL_PREVIEWS: OpenWorkModelPreview[] = Object.entries(
-  INFERENCE_MODEL_ALIASES,
-)
-  .filter(([, model]) => model.enabled)
-  .map(([id, model]) => ({
-    id,
-    title: model.displayName.replace(/^OpenWork:\s*/, ""),
-    subtitle: "OpenWork hosted",
-  }));
+export const OPENWORK_MODEL_PREVIEWS: OpenWorkModelPreview[] =
+  COMPILED_LOCAL_MVP
+    ? []
+    : Object.entries(INFERENCE_MODEL_ALIASES)
+        .filter(([, model]) => model.enabled)
+        .map(([id, model]) => ({
+          id,
+          title: model.displayName.replace(/^OpenWork:\s*/, ""),
+          subtitle: "AgencyAI hosted",
+        }));
 
 export function hasOpenWorkModelsProvider(providerIds: readonly string[]) {
   return providerIds.some((id) => id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID);

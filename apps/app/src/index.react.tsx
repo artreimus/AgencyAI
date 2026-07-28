@@ -9,6 +9,7 @@ import { getCompiledRendererProductProfile } from "./app/lib/product-profile";
 import { bootstrapTheme } from "./app/theme";
 import { isDesktopRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
+import { loadProductApp } from "virtual:product-app-entry";
 import { getReactQueryClient } from "./react-app/infra/query-client";
 import {
   createDefaultPlatform,
@@ -29,36 +30,7 @@ if (!root) {
 const product = getCompiledRendererProductProfile();
 root.dataset.productProfile = product.profile;
 
-let Providers: React.ComponentType<{ children: React.ReactNode }>;
-let Root: React.ComponentType;
-
-if (product.features.openworkCloud) {
-  const [
-    { AppProviders },
-    { AppRoot },
-    { initializeDenBootstrapConfig },
-    { getOpenWorkDeployment },
-    { startDeepLinkBridge },
-  ] = await Promise.all([
-    import("./react-app/shell/providers"),
-    import("./react-app/shell/app-root"),
-    import("./app/lib/den"),
-    import("./app/lib/openwork-deployment"),
-    import("./react-app/shell/startup-deep-links"),
-  ]);
-  startDeepLinkBridge();
-  await initializeDenBootstrapConfig();
-  root.dataset.openworkDeployment = getOpenWorkDeployment();
-  Providers = AppProviders;
-  Root = AppRoot;
-} else {
-  const [{ LocalAppProviders }, { LocalAppRoot }] = await Promise.all([
-    import("./react-app/shell/providers-local"),
-    import("./react-app/shell/app-root-local"),
-  ]);
-  Providers = LocalAppProviders;
-  Root = LocalAppRoot;
-}
+const { Providers, Root } = await loadProductApp(root);
 
 const platform = createDefaultPlatform();
 setWebNotificationHandler(platform.notify);

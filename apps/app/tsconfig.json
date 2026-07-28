@@ -20,7 +20,10 @@
   },
   "include": [
     "globals.d.ts",
+    "virtual-product-app-entry.d.ts",
     "src/index.react.tsx",
+    "src/product-entry-local.tsx",
+    "src/product-entry-upstream.tsx",
     "src/components/**/*",
     "src/i18n/**/*",
     "src/lib/**/*",

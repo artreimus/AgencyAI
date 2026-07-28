@@ -33,6 +33,15 @@ const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
 const productProfile = getBuildProductProfile();
 const requestedProductProfile =
   process.env.VITE_OPENWORK_PRODUCT_PROFILE?.trim() || productProfile.profile;
+const productEntryPath = resolve(
+  appRoot,
+  "src",
+  productProfile.features.openworkCloud
+    ? "product-entry-upstream.tsx"
+    : "product-entry-local.tsx",
+);
+const PRODUCT_ENTRY_ID = "virtual:product-app-entry";
+const RESOLVED_PRODUCT_ENTRY_ID = `\0${PRODUCT_ENTRY_ID}`;
 
 if (requestedProductProfile !== productProfile.profile) {
   throw new Error(
@@ -125,6 +134,16 @@ export default defineConfig({
     "import.meta.env.VITE_OPENWORK_PRODUCT_PROFILE": JSON.stringify(productProfile.profile),
   },
   plugins: [
+    {
+      name: "product-app-entry",
+      resolveId(id) {
+        return id === PRODUCT_ENTRY_ID ? RESOLVED_PRODUCT_ENTRY_ID : null;
+      },
+      load(id) {
+        if (id !== RESOLVED_PRODUCT_ENTRY_ID) return null;
+        return `export { loadProductApp } from ${JSON.stringify(productEntryPath)};`;
+      },
+    },
     {
       name: "openwork-dev-server-id",
       configureServer(server) {

@@ -224,7 +224,7 @@ function AgentAccessCard(props: {
       if (result.status === "skipped") {
         setError(
           result.skippedReason === "unsupported"
-            ? "This OpenWork server does not support engine refresh yet. Update OpenWork, then retry."
+            ? "This AgencyAI service does not support engine refresh yet. Update AgencyAI, then retry."
             : "Select a workspace before refreshing the engine connection.",
         );
       }

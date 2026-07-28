@@ -1,18 +1,12 @@
 /** @jsxImportSource react */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
-import { createDenClient, readDenSettings } from "@/app/lib/den";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
-import {
-  EMPTY_CONNECT_CAPABILITY_INVENTORY,
-  listAssignedConnectCapabilities,
-  type ConnectCapabilityInventory,
-} from "@/react-app/domains/session/surface/connect-capability-inventory";
 
 /**
  * Workspace-scoped wiring for the new-task composer. Everything here is
@@ -61,6 +55,11 @@ const emptyAgents = async (): Promise<Agent[]> => [];
 const emptyCommands = async (): Promise<SlashCommandOption[]> => [];
 const emptyFiles = async (): Promise<string[]> => [];
 const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
+const LOCAL_BLOCKED_MCP_NAMES = new Set([
+  "google-workspace",
+  "openwork-cloud",
+  "openwork-voice",
+]);
 
 /**
  * The real session composer, reused for the "What do you need done?" empty
@@ -75,42 +74,11 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>({});
   const [mcpStatus, setMcpStatus] = useState<string | null>(null);
-  const connectInventoryCacheRef = useRef<{ scope: string; promise: Promise<ConnectCapabilityInventory> } | null>(null);
   const context = props.context;
   const workspaceId = context?.workspaceId ?? null;
 
-  const loadConnectCapabilityInventory = async (): Promise<ConnectCapabilityInventory> => {
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const organizationId = settings.activeOrgId?.trim() ?? "";
-    if (!token || !organizationId) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-
-    const scope = `${settings.baseUrl}\n${organizationId}`;
-    if (connectInventoryCacheRef.current?.scope === scope) {
-      try {
-        return await connectInventoryCacheRef.current.promise;
-      } catch {
-        connectInventoryCacheRef.current = null;
-        return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-      }
-    }
-
-    const client = createDenClient({ baseUrl: settings.baseUrl, token });
-    const promise = listAssignedConnectCapabilities({ client, organizationId });
-    connectInventoryCacheRef.current = { scope, promise };
-    try {
-      return await promise;
-    } catch {
-      if (connectInventoryCacheRef.current?.promise === promise) {
-        connectInventoryCacheRef.current = null;
-      }
-      return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-    }
-  };
-
   const listSkills = context && workspaceId
     ? async (): Promise<SkillCard[]> => {
-        const connectPromise = loadConnectCapabilityInventory();
         const response = await context.client.listSkills(workspaceId, { includeGlobal: true });
         const localSkills = (response.items ?? []).map((skill) => ({
           name: skill.name,
@@ -120,26 +88,23 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
           scope: skill.scope,
           origin: "local",
         } satisfies SkillCard));
-        const connect = await connectPromise;
-        const next = [...localSkills, ...connect.skills];
-        setSkills(next);
-        return next;
+        setSkills(localSkills);
+        return localSkills;
       }
     : undefined;
 
   const listMcp = context && workspaceId
     ? async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
-        const connectPromise = loadConnectCapabilityInventory();
         const response = await context.client.listMcp(workspaceId);
-        const localServers = (response.items ?? []).map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-          source: entry.source,
-          origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
-        } satisfies McpServerEntry));
-        const connect = await connectPromise;
-        const servers = [...localServers, ...connect.mcpServers];
-        const statuses = connect.mcpStatuses;
+        const servers = (response.items ?? [])
+          .filter((entry) => !LOCAL_BLOCKED_MCP_NAMES.has(entry.name.trim().toLowerCase()))
+          .map((entry) => ({
+            name: entry.name,
+            config: entry.config as McpServerEntry["config"],
+            source: entry.source,
+            origin: "local",
+          } satisfies McpServerEntry));
+        const statuses: McpStatusMap = {};
         const status = servers.length ? null : "No MCP servers loaded.";
         setMcpServers(servers);
         setMcpStatuses(statuses);
