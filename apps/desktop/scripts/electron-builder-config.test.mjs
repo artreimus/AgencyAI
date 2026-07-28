@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   access,
   mkdir,
@@ -69,6 +70,51 @@ test("local-mvp omits public protocol and fails closed without an updater provid
   assert.equal(Object.hasOwn(config.linux, "protocols"), false);
 });
 
+test("local-mvp deterministically rebuilds native modules and applies hardened Electron fuses", async () => {
+  const profile = await configModule.loadSelectedProductProfile();
+  const config = configModule.createElectronBuilderConfig(profile);
+
+  assert.equal(config.files.includes("!electron/**/*.test.*"), true);
+  assert.equal(config.npmRebuild, true);
+  assert.equal(config.nativeRebuilder, "sequential");
+  assert.equal(
+    config.asarUnpack.some((entry) => entry.includes("better-sqlite3")),
+    true,
+  );
+  assert.equal(
+    config.asarUnpack.some((entry) => entry.includes("node-pty")),
+    true,
+  );
+  assert.deepEqual(config.electronFuses, {
+    runAsNode: false,
+    enableCookieEncryption: true,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+    loadBrowserProcessSpecificV8Snapshot: false,
+    grantFileProtocolExtraPrivileges: false,
+  });
+});
+
+test("local-mvp packages only the reviewed OpenCode plugin allowlist", async () => {
+  const productConfig = await import("@openwork/product-config");
+  const profile = await configModule.loadSelectedProductProfile();
+  const config = configModule.createElectronBuilderConfig(profile);
+  const pluginResource = config.extraResources.find(
+    (entry) => entry.to === "opencode-plugins",
+  );
+  const expectedFiles = productConfig.AGENCYAI_LOCAL_OPENCODE_PLUGIN_NAMES
+    .map((name) => `${name}.js`);
+
+  assert.deepEqual(
+    configModule.LOCAL_OPENCODE_PLUGIN_FILES,
+    expectedFiles,
+  );
+  assert.deepEqual(pluginResource?.filter, expectedFiles);
+  assert.equal(pluginResource?.filter.includes("*.js"), false);
+});
+
 test("platform identity, helper IDs, NSIS identity, and Linux desktop filename are stable", async () => {
   const profile = await configModule.loadSelectedProductProfile();
   const config = configModule.createElectronBuilderConfig(profile);
@@ -84,6 +130,26 @@ test("platform identity, helper IDs, NSIS identity, and Linux desktop filename a
   assert.equal(config.mac.minimumSystemVersion, "14.0");
   assert.equal(config.mac.sign, "scripts/electron-sign.cjs");
   assert.equal(Object.hasOwn(config.mac, "signIgnore"), false);
+  assert.deepEqual(config.mac.extendInfo.NSAppTransportSecurity, {
+    NSAllowsArbitraryLoads: false,
+    NSAllowsLocalNetworking: true,
+    NSExceptionDomains: {
+      "127.0.0.1": {
+        NSIncludesSubdomains: false,
+        NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
+      },
+      localhost: {
+        NSIncludesSubdomains: false,
+        NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
+      },
+    },
+  });
+  assert.equal(
+    config.mac.extendInfo.NSMicrophoneUsageDescription,
+    profile.features.voice
+      ? "AgencyAI uses the microphone when you start Voice Mode so you can speak commands to your agent."
+      : undefined,
+  );
   assert.deepEqual(configModule.macSigningConfiguration({}), {
     sign: "scripts/electron-sign.cjs",
     identity: "-",
@@ -371,6 +437,57 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
         "toolchain/x86_64-unknown-linux-gnu/LICENSE-ripgrep",
       ],
     );
+  } finally {
+    await rm(appOutDir, { recursive: true, force: true });
+  }
+});
+
+test("afterPack reverses electron-builder's updater-only arbitrary-load override", async () => {
+  const appOutDir = await mkdtemp(resolve(tmpdir(), "agencyai-after-pack-ats-"));
+  const infoPlistPath = resolve(
+    appOutDir,
+    "AgencyAI.app",
+    "Contents",
+    "Info.plist",
+  );
+  try {
+    await mkdir(dirname(infoPlistPath), { recursive: true });
+    await writeFile(infoPlistPath, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>NSAppTransportSecurity</key><dict>
+    <key>NSAllowsArbitraryLoads</key><true/>
+    <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSExceptionDomains</key><dict>
+      <key>127.0.0.1</key><dict>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
+      <key>localhost</key><dict>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
+    </dict>
+  </dict>
+</dict></plist>
+`);
+
+    assert.equal(
+      afterPack.enforceMacTransportSecurity({
+        electronPlatformName: "darwin",
+        appOutDir,
+        packager: { appInfo: { productFilename: "AgencyAI" } },
+      }).NSAllowsArbitraryLoads,
+      false,
+    );
+    const transportSecurity = JSON.parse(execFileSync("/usr/bin/plutil", [
+      "-extract",
+      "NSAppTransportSecurity",
+      "json",
+      "-o",
+      "-",
+      infoPlistPath,
+    ], { encoding: "utf8" }));
+    assert.equal(transportSecurity.NSAllowsArbitraryLoads, false);
+    assert.equal(transportSecurity.NSAllowsLocalNetworking, true);
   } finally {
     await rm(appOutDir, { recursive: true, force: true });
   }

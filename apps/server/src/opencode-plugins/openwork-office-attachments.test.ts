@@ -435,7 +435,12 @@ describe("OpenWorkOfficeAttachments", () => {
 
     const packageJson = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8"));
     if (!isRecord(packageJson) || !isRecord(packageJson.scripts) || typeof packageJson.scripts.build !== "string") throw new Error("Expected package build script");
-    expect(packageJson.scripts.build).toContain("openwork-office-attachments.ts");
+    expect(packageJson.scripts.build).toBe("node scripts/build.mjs");
+    const buildScript = await readFile(
+      join(PACKAGE_ROOT, "scripts", "build.mjs"),
+      "utf8",
+    );
+    expect(buildScript).toContain('"openwork-office-attachments"');
   });
 
   test("module exposes only the plugin factory", async () => {

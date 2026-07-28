@@ -3,45 +3,103 @@ export function configureFakeMediaForTests(app, enabled) {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 }
 
-function isLocalRendererOrigin(origin) {
-  const value = String(origin ?? "").trim();
-  if (!value || value === "file://") return true;
+function exactOrigin(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
   try {
-    const url = new URL(value);
-    return url.protocol === "file:" || url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+    const url = new URL(raw);
+    if (!url.protocol || !url.host || url.username || url.password) return null;
+    return url.origin === "null"
+      ? `${url.protocol}//${url.host}`
+      : url.origin;
   } catch {
-    return false;
+    return null;
   }
 }
 
-function shouldAllowMainWindowPermission(input) {
-  const { webContents, permission, origin, details, mainWindow } = input;
-  if (!mainWindow || !webContents || webContents.id !== mainWindow.webContents.id) return false;
-  if (!isLocalRendererOrigin(origin)) return false;
-  if (permission !== "media" && permission !== "audioCapture") return true;
+function requestsAudioOnly(permission, details) {
+  if (permission === "audioCapture") return true;
+  if (permission !== "media") return false;
   const mediaType = typeof details.mediaType === "string" ? details.mediaType : "";
-  if (mediaType && mediaType !== "audio") return false;
   const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
-  return mediaType === "audio" || (mediaTypes.includes("audio") && !mediaTypes.includes("video"));
+  if (mediaType) return mediaType === "audio";
+  return mediaTypes.includes("audio") && !mediaTypes.includes("video");
 }
 
-export function installMediaPermissionHandlers(session, getMainWindow) {
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+export function shouldAllowMainWindowPermission(input) {
+  const {
+    webContents,
+    permission,
+    origin,
+    details = {},
+    mainWindow,
+    trustedRendererOrigin,
+    allowMicrophone = false,
+  } = input;
+  if (
+    !mainWindow ||
+    typeof mainWindow.isDestroyed !== "function" ||
+    mainWindow.isDestroyed() ||
+    !webContents ||
+    webContents !== mainWindow.webContents ||
+    typeof webContents.isDestroyed !== "function" ||
+    webContents.isDestroyed()
+  ) {
+    return false;
+  }
+  const trustedOrigin = exactOrigin(trustedRendererOrigin);
+  const requestOrigin = exactOrigin(origin);
+  const currentOrigin = exactOrigin(webContents.getURL?.());
+  if (
+    !trustedOrigin ||
+    requestOrigin !== trustedOrigin ||
+    currentOrigin !== trustedOrigin
+  ) {
+    return false;
+  }
+  return allowMicrophone && requestsAudioOnly(permission, details);
+}
+
+function denyEveryPermission(targetSession) {
+  targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  targetSession.setPermissionCheckHandler(() => false);
+}
+
+export function installMediaPermissionHandlers(
+  sessionModule,
+  getMainWindow,
+  {
+    trustedRendererOrigin = null,
+    allowMicrophone = false,
+    browserPartition = "persist:openwork-browser",
+  } = {},
+) {
+  sessionModule.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     callback(shouldAllowMainWindowPermission({
       webContents,
       permission,
       origin: details?.requestingUrl,
       details: details ?? {},
       mainWindow: getMainWindow(),
+      trustedRendererOrigin,
+      allowMicrophone,
     }));
   });
-  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => (
+  sessionModule.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => (
     shouldAllowMainWindowPermission({
       webContents,
       permission,
       origin: requestingOrigin,
       details: details ?? {},
       mainWindow: getMainWindow(),
+      trustedRendererOrigin,
+      allowMicrophone,
     })
   ));
+
+  if (browserPartition) {
+    denyEveryPermission(sessionModule.fromPartition(browserPartition));
+  }
 }

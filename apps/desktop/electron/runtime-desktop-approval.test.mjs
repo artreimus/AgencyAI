@@ -93,6 +93,7 @@ async function createHarness(options = {}) {
       "openwork-office-attachments",
       "openwork-anthropic-adaptive-thinking",
       "openwork-anthropic-tool-schema",
+      "agencyai-browser-automation",
       "agencyai-local-policy",
     ].map((name) =>
       writeFile(path.join(pluginDir, `${name}.js`), "export {};\n", "utf8")),

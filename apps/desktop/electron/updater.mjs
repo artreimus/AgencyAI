@@ -251,7 +251,14 @@ export function registerUpdaterIpc({
   ipcMain,
   getMainWindow,
   enabled = true,
+  authorizeSender = (_event) => undefined,
 }) {
+  const handle = (channel, handler) => {
+    ipcMain.handle(channel, (event, ...args) => {
+      authorizeSender(event);
+      return handler(event, ...args);
+    });
+  };
   if (!enabled) {
     const disabledState = () => ({
       channel: "stable",
@@ -259,18 +266,18 @@ export function registerUpdaterIpc({
       currentVersion: resolveAppVersion(app),
       disabled: true,
     });
-    ipcMain.handle("openwork:updater:getChannel", async () => disabledState());
-    ipcMain.handle("openwork:updater:setChannel", async () => disabledState());
-    ipcMain.handle("openwork:updater:check", async () => ({
+    handle("openwork:updater:getChannel", async () => disabledState());
+    handle("openwork:updater:setChannel", async () => disabledState());
+    handle("openwork:updater:check", async () => ({
       available: false,
       reason: "feature_disabled",
       ...disabledState(),
     }));
-    ipcMain.handle("openwork:updater:download", async () => ({
+    handle("openwork:updater:download", async () => ({
       ok: false,
       reason: "feature_disabled",
     }));
-    ipcMain.handle("openwork:updater:installAndRestart", async () => ({
+    handle("openwork:updater:installAndRestart", async () => ({
       ok: false,
       reason: "feature_disabled",
     }));
@@ -342,12 +349,12 @@ export function registerUpdaterIpc({
     return autoUpdaterInstance;
   }
 
-  ipcMain.handle("openwork:updater:getChannel", async () => {
+  handle("openwork:updater:getChannel", async () => {
     const channel = await readElectronUpdaterChannel(app);
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
+  handle("openwork:updater:setChannel", async (_event, rawChannel) => {
     const channel = await writeElectronUpdaterChannel(app, rawChannel);
     checkedUpdateVersion = null;
     checkedUpdateTargetVersion = null;
@@ -363,7 +370,7 @@ export function registerUpdaterIpc({
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
+  handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
     if (rawChannel !== undefined) {
       await writeElectronUpdaterChannel(app, rawChannel);
     }
@@ -410,7 +417,7 @@ export function registerUpdaterIpc({
     }
   });
 
-  ipcMain.handle("openwork:updater:download", async () => {
+  handle("openwork:updater:download", async () => {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
@@ -445,7 +452,7 @@ export function registerUpdaterIpc({
     }
   });
 
-  ipcMain.handle("openwork:updater:installAndRestart", async () => {
+  handle("openwork:updater:installAndRestart", async () => {
     if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };

@@ -92,10 +92,11 @@ describe("AgencyAI packaged plugin policy", () => {
       const root = join(here, "opencode-plugins");
       const specs = agencyAiLocalPluginUrls(here);
 
-      expect(specs).toHaveLength(6);
+      expect(specs).toHaveLength(7);
       expect(specs.every((spec) =>
         isAllowedAgencyAiLocalPluginSpec(spec, root))).toBe(true);
       expect(specs.some((spec) => spec.includes("opencode-chrome-devtools"))).toBe(false);
+      expect(specs.some((spec) => spec.includes("agencyai-browser-automation"))).toBe(true);
       expect(specs.some((spec) => spec.includes("/tmp/untrusted-plugins"))).toBe(false);
     });
   });

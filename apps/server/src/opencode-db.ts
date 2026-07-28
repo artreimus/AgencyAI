@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { isAbsolute, join } from "node:path";
 import { opencodeDataDirs as defaultOpencodeDataDirs } from "@openwork/paths";
 
-import Database from "better-sqlite3";
 import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 
 type SeedMessage = {
@@ -15,6 +15,16 @@ const DEFAULT_AGENT = "openwork";
 const DEFAULT_PROVIDER = "openai";
 const DEFAULT_MODEL = "gpt-5.4";
 const OPENWORK_DEV_DATA_DIRS = ["openwork-dev-data", "opencode-dev"];
+const require = createRequire(import.meta.url);
+
+function loadBetterSqlite3() {
+  if (typeof process.versions.bun === "string") {
+    throw new Error(
+      "OpenCode transcript seeding requires the Node/Electron runtime",
+    );
+  }
+  return require("better-sqlite3") as typeof import("better-sqlite3");
+}
 
 function truthy(value: string | undefined): boolean {
   if (!value) return false;
@@ -94,6 +104,7 @@ export function resolveOpencodeDbPath(): string {
 }
 
 function findOpencodeSessionDbPath(sessionId: string, inputPath?: string): string | null {
+  const Database = loadBetterSqlite3();
   const candidates = (inputPath ? [inputPath] : candidateOpencodeDbPaths()).filter((candidate) => existsSync(candidate));
   for (const dbPath of candidates) {
     const db = new Database(dbPath, { readonly: true });
@@ -135,6 +146,7 @@ export function seedOpencodeSessionMessages(input: {
   dbPath?: string;
   now?: number;
 }): { inserted: number; skipped: boolean } {
+  const Database = loadBetterSqlite3();
   const sessionId = input.sessionId.trim();
   if (!sessionId) {
     throw new Error("sessionId is required");

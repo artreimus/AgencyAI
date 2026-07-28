@@ -2,6 +2,15 @@ const { basename } = require("node:path");
 
 const PRODUCT_PROFILE_SELECTOR = "local-mvp";
 const MACOS_MINIMUM_VERSION = "14.0";
+const LOCAL_OPENCODE_PLUGIN_FILES = Object.freeze([
+  "agencyai-local-extensions.js",
+  "agencyai-local-capabilities.js",
+  "openwork-office-attachments.js",
+  "openwork-anthropic-adaptive-thinking.js",
+  "openwork-anthropic-tool-schema.js",
+  "agencyai-browser-automation.js",
+  "agencyai-local-policy.js",
+]);
 
 function helperBundleIds(appId) {
   const helperBundleId = `${appId}.helper`;
@@ -75,6 +84,7 @@ function createElectronBuilderConfig(profile) {
     },
     files: [
       "electron/**/*",
+      "!electron/**/*.test.*",
       "server/**/*",
       "!server/dist/opencode-plugins/**",
       "package.json",
@@ -91,7 +101,7 @@ function createElectronBuilderConfig(profile) {
       {
         from: "server/dist/opencode-plugins",
         to: "opencode-plugins",
-        filter: ["*.js"],
+        filter: [...LOCAL_OPENCODE_PLUGIN_FILES],
       },
       {
         from: "../../packages/docs",
@@ -110,10 +120,23 @@ function createElectronBuilderConfig(profile) {
     },
     asar: true,
     asarUnpack: [
+      "node_modules/.pnpm/better-sqlite3*/**",
+      "node_modules/better-sqlite3/**",
       "node_modules/.pnpm/@lydell+node-pty*/**",
       "node_modules/node-pty/**",
     ],
-    npmRebuild: false,
+    npmRebuild: true,
+    nativeRebuilder: "sequential",
+    electronFuses: {
+      runAsNode: false,
+      enableCookieEncryption: true,
+      enableNodeOptionsEnvironmentVariable: false,
+      enableNodeCliInspectArguments: false,
+      enableEmbeddedAsarIntegrityValidation: true,
+      onlyLoadAppFromAsar: true,
+      loadBrowserProcessSpecificV8Snapshot: false,
+      grantFileProtocolExtraPrivileges: false,
+    },
     afterPack: "scripts/electron-after-pack.cjs",
     afterSign: "scripts/electron-after-sign.cjs",
     afterAllArtifactBuild:
@@ -131,13 +154,27 @@ function createElectronBuilderConfig(profile) {
       entitlements: "build/entitlements.mac.plist",
       entitlementsInherit: "build/entitlements.mac.plist",
       ...helperIds,
-      ...(profile.features.voice
-        ? {
-            extendInfo: {
-              NSMicrophoneUsageDescription: `${brand.name} uses the microphone when you start Voice Mode so you can speak commands to your agent.`,
+      extendInfo: {
+        NSAppTransportSecurity: {
+          NSAllowsArbitraryLoads: false,
+          NSAllowsLocalNetworking: true,
+          NSExceptionDomains: {
+            "127.0.0.1": {
+              NSIncludesSubdomains: false,
+              NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
             },
-          }
-        : {}),
+            localhost: {
+              NSIncludesSubdomains: false,
+              NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
+            },
+          },
+        },
+        ...(profile.features.voice
+          ? {
+              NSMicrophoneUsageDescription: `${brand.name} uses the microphone when you start Voice Mode so you can speak commands to your agent.`,
+            }
+          : {}),
+      },
       extraResources: [
         {
           from: "resources/toolchain/aarch64-apple-darwin",
@@ -261,3 +298,4 @@ module.exports = electronBuilderConfig;
 module.exports.createElectronBuilderConfig = createElectronBuilderConfig;
 module.exports.loadSelectedProductProfile = loadSelectedProductProfile;
 module.exports.macSigningConfiguration = macSigningConfiguration;
+module.exports.LOCAL_OPENCODE_PLUGIN_FILES = LOCAL_OPENCODE_PLUGIN_FILES;

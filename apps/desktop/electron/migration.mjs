@@ -17,10 +17,21 @@ function migrationSnapshotPath(app, done = false) {
 // into app_data_dir before it kicks off the Electron installer. Electron
 // renders the workspace list / session-by-workspace preferences from it on
 // first boot and then marks it .done so subsequent boots don't re-import.
-export function registerMigrationIpc({ app, ipcMain, enabled = true }) {
+export function registerMigrationIpc({
+  app,
+  ipcMain,
+  enabled = true,
+  authorizeSender = (_event) => undefined,
+}) {
+  const handle = (channel, handler) => {
+    ipcMain.handle(channel, (event, ...args) => {
+      authorizeSender(event);
+      return handler(event, ...args);
+    });
+  };
   if (!enabled) {
-    ipcMain.handle("openwork:migration:read", async () => null);
-    ipcMain.handle("openwork:migration:ack", async () => ({
+    handle("openwork:migration:read", async () => null);
+    handle("openwork:migration:ack", async () => ({
       ok: false,
       moved: false,
       code: "feature_disabled",
@@ -28,7 +39,7 @@ export function registerMigrationIpc({ app, ipcMain, enabled = true }) {
     return { enabled: false };
   }
 
-  ipcMain.handle("openwork:migration:read", async () => {
+  handle("openwork:migration:read", async () => {
     const snapshotPath = migrationSnapshotPath(app);
     if (!existsSync(snapshotPath)) return null;
     try {
@@ -44,7 +55,7 @@ export function registerMigrationIpc({ app, ipcMain, enabled = true }) {
     }
   });
 
-  ipcMain.handle("openwork:migration:ack", async () => {
+  handle("openwork:migration:ack", async () => {
     const snapshotPath = migrationSnapshotPath(app);
     const donePath = migrationSnapshotPath(app, true);
     if (!existsSync(snapshotPath)) return { ok: true, moved: false };

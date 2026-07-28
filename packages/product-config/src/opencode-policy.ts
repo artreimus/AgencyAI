@@ -8,5 +8,6 @@ export const AGENCYAI_LOCAL_OPENCODE_PLUGIN_NAMES = Object.freeze([
   "openwork-office-attachments",
   "openwork-anthropic-adaptive-thinking",
   "openwork-anthropic-tool-schema",
+  "agencyai-browser-automation",
   "agencyai-local-policy",
 ] as const)
