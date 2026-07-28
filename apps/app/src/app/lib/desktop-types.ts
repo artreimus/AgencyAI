@@ -35,6 +35,8 @@ export type {
   OpenworkDockerCleanupResult,
   OpenworkServerInfo,
   OrchestratorDetachedHost,
+  ReleaseMetadataDocument,
+  ReleaseMetadataFile,
   SandboxDebugProbeResult,
   SandboxDoctorResult,
   UpdaterEnvironment,

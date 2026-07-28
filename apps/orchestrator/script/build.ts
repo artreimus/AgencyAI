@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import solidPlugin from "../node_modules/@opentui/solid/scripts/solid-plugin";
 
@@ -123,11 +123,14 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   }
 
   const resolvedTarget = target ?? defaultTarget();
+  const releaseInputsDirectory =
+    process.env.AGENCYAI_RELEASE_INPUTS_DIR?.trim() || null;
   const result = await bun.build({
     tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
     entrypoints: [entrypoint],
     define,
+    metafile: Boolean(releaseInputsDirectory),
     compile: {
       target: resolvedTarget,
       outfile,
@@ -138,6 +141,18 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
       console.error(log);
     }
     process.exit(1);
+  }
+  if (releaseInputsDirectory && result.metafile) {
+    mkdirSync(releaseInputsDirectory, { recursive: true });
+    const safeTarget = resolvedTarget.replace(/[^A-Za-z0-9_.-]+/g, "-");
+    writeFileSync(
+      join(
+        releaseInputsDirectory,
+        `orchestrator-${safeTarget}.metafile.json`,
+      ),
+      `${JSON.stringify(result.metafile, null, 2)}\n`,
+      "utf8",
+    );
   }
 }
 

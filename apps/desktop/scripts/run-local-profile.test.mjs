@@ -125,7 +125,7 @@ test("the test action contains the complete fast verification matrix", () => {
   assert.deepEqual(
     resolved.commands.slice(2).map(({ command, args }) => [command, ...args].join(" ")),
     [
-      "/node --test /repo/scripts/check-source-closure.test.mjs",
+      "/node --test /repo/scripts/check-source-closure.test.mjs /repo/scripts/check-local-profile.test.mjs /repo/scripts/release/local-release-policy.test.mjs",
       "pnpm --filter @openwork/product-config typecheck",
       "pnpm --filter @openwork/product-config test",
       "pnpm --filter @openwork/app typecheck",
@@ -140,6 +140,7 @@ test("the test action contains the complete fast verification matrix", () => {
       "pnpm --filter @openwork/app build",
       "pnpm --filter @openwork/desktop check:electron",
       "pnpm run check:outbound-access",
+      "pnpm run check:local-profile",
     ],
   );
 });

@@ -1,0 +1,76 @@
+name: AgencyAI Local Desktop CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+      - "codex/agencyai-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agencyai-local-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_PRODUCT_PROFILE: local-mvp
+
+jobs:
+  fast:
+    name: Local profile policy and tests
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: test "$(uname -m)" = arm64
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:local
+
+  packaged:
+    name: Ad-hoc packaged macOS arm64 proof
+    runs-on: macos-14
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: test "$(uname -m)" = arm64
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:local:dir
+      - run: pnpm inspect:local
+      - run: pnpm --filter @openwork/desktop smoke:native
+      - run: pnpm --filter @openwork/desktop smoke:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agencyai-local-proof-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/dist-electron/mac-arm64/agencyai.app/Contents/Resources/release-metadata
+            evals/results

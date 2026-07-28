@@ -11,6 +11,7 @@ const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
 const agencyAiDocsRoot = resolve(desktopRoot, ".generated", "agencyai-docs");
+const releaseInputsRoot = resolve(desktopRoot, ".generated", "release-inputs");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -34,20 +35,27 @@ function run(command, args, cwd, env) {
 }
 
 run(nodeCmd, [resolve(repoRoot, "scripts", "check-source-closure.mjs")], repoRoot);
+rmSync(releaseInputsRoot, { recursive: true, force: true });
 run(pnpmCmd, ["--filter", "@openwork/product-config", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "stage-agencyai-docs.mjs")], repoRoot);
 run(
   nodeCmd,
   [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir],
   desktopRoot,
-  releaseBuild ? { OPENWORK_RELEASE_BUILD: "1" } : undefined,
+  {
+    AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsRoot,
+    ...(releaseBuild ? { OPENWORK_RELEASE_BUILD: "1" } : {}),
+  },
 );
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
-run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot, {
+  AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsRoot,
+});
 // OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so the
 // packaged app-dist tree resolves beneath agencyai-internal://renderer/.
 run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
+  AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsRoot,
   OPENWORK_ELECTRON_BUILD: "1",
 });
 run(nodeCmd, [resolve(__dirname, "check-agencyai-product-surface.mjs")], repoRoot);
@@ -67,7 +75,24 @@ if (patched !== serverJsSrc) {
 }
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
-copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+const sourceServerPackage = JSON.parse(
+  readFileSync(resolve(repoRoot, "apps", "server", "package.json"), "utf8"),
+);
+writeFileSync(
+  resolve(packagedServerRoot, "package.json"),
+  `${JSON.stringify(
+    {
+      name: sourceServerPackage.name,
+      version: sourceServerPackage.version,
+      private: true,
+      type: sourceServerPackage.type,
+      dependencies: sourceServerPackage.dependencies,
+    },
+    null,
+    2,
+  )}\n`,
+  "utf8",
+);
 run(
   nodeCmd,
   [

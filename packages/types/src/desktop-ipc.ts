@@ -183,6 +183,23 @@ export type AppBuildInfo = {
   productProfile: ProductProfile;
 };
 
+export type ReleaseMetadataFile =
+  | "THIRD_PARTY_NOTICES.txt"
+  | "ELECTRON-LICENSE.txt"
+  | "LICENSES.chromium.html"
+  | "agencyai-desktop.spdx.json"
+  | "agencyai-desktop.cdx.json"
+  | "release-manifest.json";
+
+export type ReleaseMetadataDocument = {
+  available: boolean;
+  fileName: ReleaseMetadataFile;
+  mediaType: "text/plain" | "text/html" | "application/json";
+  content: string | null;
+  size: number | null;
+  sha256: string | null;
+};
+
 /** Org + first-skill identity shared by the handoff and prepared records. */
 export type DesktopBootstrapOrgSkill = {
   orgId: string;
@@ -526,6 +543,10 @@ export type DesktopCommandMap = {
 
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
+  releaseMetadataRead: {
+    args: [fileName: ReleaseMetadataFile];
+    result: ReleaseMetadataDocument;
+  };
   desktopNotificationShow: {
     args: [input: DesktopNotificationInput];
     result: DesktopNotificationResult;

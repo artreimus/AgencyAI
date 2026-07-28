@@ -56,6 +56,102 @@ function resolveResourcesDir(context) {
   return path.join(context.appOutDir, "resources");
 }
 
+function walkFiles(root, current = root) {
+  if (!fs.existsSync(current)) return [];
+  const output = [];
+  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+    const filePath = path.join(current, entry.name);
+    const stats = fs.lstatSync(filePath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(
+        `Native payload cannot contain symbolic links: ${path.relative(root, filePath)}`,
+      );
+    }
+    if (stats.isDirectory()) output.push(...walkFiles(root, filePath));
+    else if (stats.isFile()) output.push(filePath);
+  }
+  return output;
+}
+
+function prunePackagedNativePayload(context, triple) {
+  if (context.electronPlatformName !== "darwin") return [];
+  const resourcesDir = resolveResourcesDir(context);
+  const unpackedRoot = path.join(resourcesDir, "app.asar.unpacked");
+  if (!fs.existsSync(unpackedRoot)) {
+    throw new Error("Packaged app is missing app.asar.unpacked");
+  }
+
+  for (const filePath of walkFiles(unpackedRoot)) {
+    const relativePath = path.relative(unpackedRoot, filePath)
+      .split(path.sep)
+      .join("/");
+    if (
+      relativePath.includes("/better-sqlite3/prebuilds/")
+      && !relativePath.endsWith(
+        triple === "aarch64-apple-darwin"
+          ? "/better-sqlite3/prebuilds/darwin-arm64.node"
+          : "/better-sqlite3/prebuilds/darwin-x64.node",
+      )
+    ) {
+      fs.rmSync(filePath, { force: true });
+    }
+  }
+
+  const nativeFiles = walkFiles(unpackedRoot)
+    .filter((filePath) => {
+      const relativePath = path.relative(unpackedRoot, filePath)
+        .split(path.sep)
+        .join("/");
+      return relativePath.endsWith(".node")
+        || relativePath.endsWith("/spawn-helper");
+    })
+    .sort();
+  const expectedSuffixes = triple === "aarch64-apple-darwin"
+    ? [
+        "/better-sqlite3/prebuilds/darwin-arm64.node",
+        "/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node",
+        "/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper",
+      ]
+    : [
+        "/better-sqlite3/prebuilds/darwin-x64.node",
+        "/@lydell/node-pty-darwin-x64/prebuilds/darwin-x64/pty.node",
+        "/@lydell/node-pty-darwin-x64/prebuilds/darwin-x64/spawn-helper",
+      ];
+  for (const suffix of expectedSuffixes) {
+    const matches = nativeFiles.filter((filePath) =>
+      filePath.split(path.sep).join("/").endsWith(suffix));
+    if (matches.length !== 1) {
+      throw new Error(
+        `Expected exactly one packaged native payload ending in ${suffix}; received ${matches.length}`,
+      );
+    }
+  }
+  if (nativeFiles.length !== expectedSuffixes.length) {
+    throw new Error(
+      `Unexpected packaged native payload closure: ${nativeFiles
+        .map((filePath) => path.relative(unpackedRoot, filePath))
+        .join(", ")}`,
+    );
+  }
+
+  const expectedArchitecture =
+    triple === "aarch64-apple-darwin" ? "arm64" : "x86_64";
+  for (const filePath of nativeFiles) {
+    const description = execFileSync("/usr/bin/file", ["-b", filePath], {
+      encoding: "utf8",
+    }).trim();
+    if (
+      !description.includes("Mach-O")
+      || !description.includes(expectedArchitecture)
+    ) {
+      throw new Error(
+        `Wrong native architecture for ${filePath}: ${description}`,
+      );
+    }
+  }
+  return nativeFiles;
+}
+
 function enforceMacTransportSecurity(context) {
   if (context.electronPlatformName !== "darwin") return null;
   const appPath = resolveMacAppPath(context);
@@ -178,6 +274,7 @@ async function afterPack(context) {
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
   enforceMacTransportSecurity(context);
+  prunePackagedNativePayload(context, triple);
 
   const sidecarsDir = resolveSidecarsDir(context);
   if (!sidecarsDir || !fs.existsSync(sidecarsDir)) return;
@@ -220,6 +317,7 @@ module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.enforceMacTransportSecurity = enforceMacTransportSecurity;
 module.exports.normalizeArch = normalizeArch;
+module.exports.prunePackagedNativePayload = prunePackagedNativePayload;
 module.exports.resolveResourcesDir = resolveResourcesDir;
 module.exports.sidecarBases = sidecarBases;
 module.exports.targetTriple = targetTriple;

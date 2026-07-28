@@ -10,6 +10,7 @@ import {
   packagedMacAppCandidates,
   packagedSmokeLaunchArguments,
   packagedUiControlDiscoveryPath,
+  parseLsofNetworkEndpoints,
   resolvePackagedMacApp,
   stopChild,
 } from "./run-packaged-smoke.mjs";
@@ -51,8 +52,8 @@ test("packaged smoke resolves only deterministic AgencyAI app candidates", async
   try {
     const candidates = packagedMacAppCandidates(root);
     assert.deepEqual(candidates, [
-      path.join(root, "dist-electron", "mac-arm64", "AgencyAI.app"),
-      path.join(root, "dist-electron", "mac", "AgencyAI.app"),
+      path.join(root, "dist-electron", "mac-arm64", "agencyai.app"),
+      path.join(root, "dist-electron", "mac", "agencyai.app"),
     ]);
     await mkdir(candidates[0], { recursive: true });
     assert.equal(
@@ -83,5 +84,41 @@ test("packaged discovery remains inside the AgencyAI application-data root", () 
       "user-data",
       "openwork-ui-control.json",
     ),
+  );
+});
+
+test("packaged socket proof distinguishes loopback from wildcard and public peers", () => {
+  const endpoints = parseLsofNetworkEndpoints([
+    "p100",
+    "cAgencyAI",
+    "PTCP",
+    "n127.0.0.1:51000->127.0.0.1:4096",
+    "p101",
+    "copencode",
+    "PTCP",
+    "n127.0.0.1:4100 (LISTEN)",
+    "p102",
+    "cAgencyAI Helper",
+    "PUDP",
+    "n*:5353",
+    "p103",
+    "cAgencyAI",
+    "PTCP",
+    "n10.0.0.2:50100->93.184.216.34:443",
+  ].join("\n"));
+  assert.deepEqual(
+    endpoints.map(({ endpoint, loopback }) => ({ endpoint, loopback })),
+    [
+      {
+        endpoint: "127.0.0.1:51000->127.0.0.1:4096",
+        loopback: true,
+      },
+      { endpoint: "127.0.0.1:4100 (LISTEN)", loopback: true },
+      { endpoint: "*:5353", loopback: false },
+      {
+        endpoint: "10.0.0.2:50100->93.184.216.34:443",
+        loopback: false,
+      },
+    ],
   );
 });

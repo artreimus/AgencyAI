@@ -1,15 +1,13 @@
 import { homedir, platform } from "node:os";
 import {
-  isAbsolute,
   join,
-  relative,
-  resolve,
-  sep,
 } from "node:path";
 import {
   legacyOpenWorkImportEnabled,
   type ServerProductPolicy,
 } from "../product-policy.js";
+import { getBuildProductProfile } from "@openwork/product-config";
+import { localUiControlDiscoveryPaths } from "./local-ui-control-discovery.js";
 
 type UiControlDiscoveryOptions = Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
@@ -41,38 +39,20 @@ export function uiControlDiscoveryPaths(
     options?.localOnly === true
     || !legacyOpenWorkImportEnabled(options?.productPolicy)
   ) {
-    const storageRoot = env.OPENWORK_STORAGE_ROOT?.trim();
-    if (
-      !explicit
-      || !storageRoot
-      || !isAbsolute(explicit)
-      || !isAbsolute(storageRoot)
-    ) {
-      return [];
-    }
-    const root = resolve(storageRoot);
-    const candidate = resolve(explicit);
-    const child = relative(root, candidate);
-    if (
-      child === ".."
-      || child.startsWith(`..${sep}`)
-      || isAbsolute(child)
-    ) {
-      return [];
-    }
-    return [candidate];
+    return localUiControlDiscoveryPaths({ env });
   }
 
+  const brand = getBuildProductProfile().brand;
   return [
     explicit,
     join(
       userAppDataDir(options),
-      "com.differentai.openwork",
+      brand.appId,
       "openwork-ui-control.json",
     ),
     join(
       userAppDataDir(options),
-      "com.differentai.openwork.dev",
+      brand.devAppId,
       "openwork-ui-control.json",
     ),
   ].filter((path): path is string => Boolean(path));

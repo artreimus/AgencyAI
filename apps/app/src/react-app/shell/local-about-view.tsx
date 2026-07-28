@@ -1,9 +1,15 @@
 /** @jsxImportSource react */
-import { ExternalLink, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { ExternalLink, FileText, ShieldCheck } from "lucide-react";
 import { AGENCYAI_OPENCODE_BINARY_VERSION } from "@openwork/product-config";
 
 import { Button } from "@/components/ui/button";
-import type { AppBuildInfo } from "@/app/lib/desktop";
+import {
+  releaseMetadataRead,
+  type AppBuildInfo,
+  type ReleaseMetadataDocument,
+  type ReleaseMetadataFile,
+} from "@/app/lib/desktop";
 import openWorkLicense from "../../../../desktop/resources/licenses/OPENWORK-LICENSE.txt?raw";
 import openCodeLicense from "../../../../desktop/resources/licenses/OPENCODE-LICENSE.txt?raw";
 
@@ -46,6 +52,94 @@ const OPEN_SOURCE_PROJECTS = Object.freeze([
     ],
   },
 ]);
+
+const PACKAGED_RELEASE_DOCUMENTS = Object.freeze([
+  {
+    fileName: "THIRD_PARTY_NOTICES.txt",
+    label: "Complete third-party notices",
+  },
+  {
+    fileName: "ELECTRON-LICENSE.txt",
+    label: "Electron license",
+  },
+  {
+    fileName: "LICENSES.chromium.html",
+    label: "Chromium third-party licenses",
+  },
+  {
+    fileName: "agencyai-desktop.spdx.json",
+    label: "SPDX 2.3 bill of materials",
+  },
+  {
+    fileName: "agencyai-desktop.cdx.json",
+    label: "CycloneDX 1.7 bill of materials",
+  },
+] satisfies ReadonlyArray<{
+  fileName: ReleaseMetadataFile;
+  label: string;
+}>);
+
+function PackagedReleaseDocument({
+  fileName,
+  label,
+}: {
+  fileName: ReleaseMetadataFile;
+  label: string;
+}) {
+  const [document, setDocument] = useState<ReleaseMetadataDocument | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    void releaseMetadataRead(fileName)
+      .then(setDocument)
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <FileText className="size-4 text-muted-foreground" />
+          {label}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={loading}
+          onClick={load}
+        >
+          {loading ? "Loading…" : document?.available ? "Reload" : "Read"}
+        </Button>
+      </div>
+      {document && !document.available ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Available in a packaged AgencyAI release candidate.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="mt-2 text-xs text-destructive">{error}</p>
+      ) : null}
+      {document?.available && document.content ? (
+        <details className="mt-2" open>
+          <summary className="cursor-pointer font-mono text-[11px] text-muted-foreground">
+            {document.fileName} · {document.size?.toLocaleString()} bytes ·{" "}
+            {document.sha256?.slice(0, 12)}
+          </summary>
+          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-muted p-3 text-[11px] leading-5 text-muted-foreground">
+            {document.content}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 export function LocalAboutView({
   buildInfo,
@@ -134,9 +228,17 @@ export function LocalAboutView({
           ))}
         </div>
         <p className="text-xs leading-5 text-muted-foreground">
-          Complete dependency notices and machine-readable bills of materials
-          are packaged with release candidates.
+          Release candidates generate these documents from the exact packaged
+          renderer, server, sidecar, native-module, and Electron closure.
         </p>
+        <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
+          {PACKAGED_RELEASE_DOCUMENTS.map((document) => (
+            <PackagedReleaseDocument
+              key={document.fileName}
+              {...document}
+            />
+          ))}
+        </div>
       </section>
     </div>
   );

@@ -298,7 +298,11 @@ test("desktop packaging no longer references the removed YAML config or upstream
   );
   assert.match(
     electronBuildSource,
-    /releaseBuild \? \{ OPENWORK_RELEASE_BUILD: "1" \} : undefined/,
+    /AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsRoot/,
+  );
+  assert.match(
+    electronBuildSource,
+    /\.\.\.\(releaseBuild \? \{ OPENWORK_RELEASE_BUILD: "1" \} : \{\}\)/,
   );
 
   const installer = await readFile(
@@ -335,6 +339,25 @@ test("desktop release workflows use AgencyAI artifacts without updater manifests
   assert.match(workflows[1], /dist-electron\/agencyai-/);
   assert.match(workflows[2], /dist-electron\/agencyai-\*\.dmg/);
   assert.match(workflows[2], /dist-electron\/agencyai-\*\.zip/);
+});
+
+test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release credentials", async () => {
+  const workflow = await readFile(
+    resolve(
+      desktopDirectory,
+      "../../.github/workflows/local-desktop-ci.yml",
+    ),
+    "utf8",
+  );
+  assert.match(workflow, /runs-on: macos-14/);
+  assert.match(workflow, /test "\$\(uname -m\)" = arm64/);
+  assert.match(workflow, /pnpm package:local:dir/);
+  assert.match(workflow, /pnpm --filter @openwork\/desktop smoke:packaged/);
+  assert.doesNotMatch(workflow, /self-hosted|CSC_|APPLE_|notari[sz]e|secrets\./i);
+  assert.doesNotMatch(
+    workflow,
+    /gh release|contents:\s*write|release-desktop|MACOS_NOTARIZE/i,
+  );
 });
 
 test("local-mvp artifact hook removes only generated blockmaps", async () => {

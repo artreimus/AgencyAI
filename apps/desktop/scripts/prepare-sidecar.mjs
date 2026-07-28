@@ -275,6 +275,8 @@ for (const name of [
 }
 
 const productionPackaging = process.env.OPENWORK_RELEASE_BUILD === "1";
+const releaseInputsDirectory =
+  process.env.AGENCYAI_RELEASE_INPUTS_DIR?.trim() || null;
 const taskTempRoot = mkdtempSync(join(tmpdir(), "agencyai-sidecar-"));
 process.once("exit", () => {
   rmSync(taskTempRoot, { recursive: true, force: true });
@@ -415,6 +417,49 @@ const downloadManifestOpenCodeArchive = (asset) => {
     artifactMetadata,
     workflowRunMetadata,
   });
+  if (releaseInputsDirectory) {
+    const evidenceDirectory = resolve(
+      releaseInputsDirectory,
+      "opencode",
+      resolvedTargetTriple,
+    );
+    rmSync(evidenceDirectory, { recursive: true, force: true });
+    mkdirSync(evidenceDirectory, { recursive: true });
+    const packagedEvidence = Object.keys(asset.artifactFiles)
+      .filter((fileName) => fileName !== asset.archive)
+      .sort();
+    for (const fileName of packagedEvidence) {
+      const sourcePath = join(downloadDir, fileName);
+      assertExpectedHash(
+        sourcePath,
+        asset.artifactFiles[fileName],
+        `OpenCode evidence ${fileName}`,
+      );
+      copyFileSync(sourcePath, join(evidenceDirectory, fileName));
+    }
+    writeFileSync(
+      join(evidenceDirectory, "evidence-inventory.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          target: resolvedTargetTriple,
+          excludedArchive: {
+            file: asset.archive,
+            sha256: asset.artifactFiles[asset.archive],
+          },
+          files: Object.fromEntries(
+            packagedEvidence.map((fileName) => [
+              fileName,
+              asset.artifactFiles[fileName],
+            ]),
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
   const archivePath = join(downloadDir, asset.archive);
   if (!existsSync(archivePath)) {
     throw new Error(
@@ -438,6 +483,7 @@ const copyExecutable = (source, targets) => {
 };
 
 const opencodeAsset = targetDistribution.opencode;
+let verifiedWorkflowArchive = null;
 let verifiedExistingOpenCode = false;
 if (opencodeCandidatePath && existsSync(opencodeCandidatePath)) {
   try {
@@ -448,9 +494,19 @@ if (opencodeCandidatePath && existsSync(opencodeCandidatePath)) {
   }
 }
 
+if (productionPackaging) {
+  if (!releaseInputsDirectory) {
+    throw new Error(
+      "AGENCYAI_RELEASE_INPUTS_DIR is required for production packaging",
+    );
+  }
+  verifiedWorkflowArchive = downloadManifestOpenCodeArchive(opencodeAsset);
+}
+
 if (!verifiedExistingOpenCode) {
   const archivePath =
     resolveLocalArchiveOverride("AGENCYAI_OPENCODE_ARCHIVE_PATH")
+    ?? verifiedWorkflowArchive
     ?? downloadManifestOpenCodeArchive(opencodeAsset);
   assertExpectedHash(
     archivePath,
@@ -583,6 +639,9 @@ if (shouldBuildOrchestrator) {
       ...process.env,
       NODE_ENV: "production",
       BUN_ENV: "production",
+      ...(releaseInputsDirectory
+        ? { AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsDirectory }
+        : {}),
     },
   });
   if (result.status !== 0) {

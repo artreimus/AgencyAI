@@ -127,12 +127,123 @@ async function walkFiles(root) {
   return files;
 }
 
+function descendantProcessIds(rootPid) {
+  const output = commandOutput("ps", ["-axo", "pid=,ppid="]);
+  const children = new Map();
+  for (const line of output.split("\n")) {
+    const [pidValue, parentValue] = line.trim().split(/\s+/);
+    const pid = Number(pidValue);
+    const parent = Number(parentValue);
+    if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(parent)) continue;
+    const values = children.get(parent) ?? [];
+    values.push(pid);
+    children.set(parent, values);
+  }
+  const result = new Set([rootPid]);
+  const queue = [rootPid];
+  while (queue.length) {
+    const parent = queue.shift();
+    for (const child of children.get(parent) ?? []) {
+      if (result.has(child)) continue;
+      result.add(child);
+      queue.push(child);
+    }
+  }
+  return [...result].sort((left, right) => left - right);
+}
+
+function loopbackEndpoint(value) {
+  const endpoint = value.trim().replace(/\s+\(.+\)$/, "");
+  const host = endpoint.startsWith("[")
+    ? endpoint.slice(1, endpoint.indexOf("]"))
+    : endpoint.slice(0, endpoint.lastIndexOf(":"));
+  if (!host) return false;
+  if (host === "::1" || host.toLowerCase() === "localhost") return true;
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return Boolean(
+    ipv4
+    && Number(ipv4[1]) === 127
+    && ipv4.slice(1).every((part) => Number(part) <= 255),
+  );
+}
+
+export function parseLsofNetworkEndpoints(output) {
+  const endpoints = [];
+  let processId = null;
+  let commandName = null;
+  let protocol = null;
+  for (const line of output.split("\n")) {
+    const field = line[0];
+    const value = line.slice(1);
+    if (field === "p") processId = Number(value);
+    else if (field === "c") commandName = value;
+    else if (field === "P") protocol = value;
+    else if (field === "n") {
+      const peers = value.split("->");
+      endpoints.push({
+        processId,
+        command: commandName,
+        protocol,
+        endpoint: value,
+        loopback: peers.every(loopbackEndpoint),
+      });
+    }
+  }
+  return endpoints;
+}
+
+function sampleProcessTreeNetwork(child, stage) {
+  assert(child?.pid, `Cannot sample process tree at ${stage}`);
+  const processIds = descendantProcessIds(child.pid);
+  const result = spawnSync(
+    "lsof",
+    [
+      "-nP",
+      "-a",
+      "-p",
+      processIds.join(","),
+      "-iTCP",
+      "-iUDP",
+      "-FpcPn",
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`lsof failed at ${stage}: ${String(result.stderr ?? "").trim()}`);
+  }
+  const endpoints = parseLsofNetworkEndpoints(String(result.stdout ?? ""));
+  const nonLoopback = endpoints.filter((entry) => !entry.loopback);
+  assert(
+    nonLoopback.length === 0,
+    `Non-loopback socket observed at ${stage}: ${JSON.stringify(nonLoopback)}`,
+  );
+  return { stage, processIds, endpoints };
+}
+
+async function readNetworkAudit(auditPath) {
+  const source = await readFile(auditPath, "utf8");
+  const records = source
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert(records.length > 0, "Packaged network audit did not record traffic");
+  const unexpected = records.filter(
+    (record) => record.loopback !== true || record.decision !== "allow",
+  );
+  assert(
+    unexpected.length === 0,
+    `Packaged app attempted non-loopback traffic: ${JSON.stringify(unexpected)}`,
+  );
+  return records;
+}
+
 export function packagedMacAppCandidates(
   root = desktopRoot,
 ) {
   return [
-    path.join(root, "dist-electron", "mac-arm64", "AgencyAI.app"),
-    path.join(root, "dist-electron", "mac", "AgencyAI.app"),
+    path.join(root, "dist-electron", "mac-arm64", "agencyai.app"),
+    path.join(root, "dist-electron", "mac", "agencyai.app"),
   ];
 }
 
@@ -407,6 +518,19 @@ async function inspectPackagedLayout(appPath, profile) {
     path.join(resources, "packaged-runtime-integrity.json"),
     "packaged runtime integrity",
   );
+  for (const releaseFile of [
+    "THIRD_PARTY_NOTICES.txt",
+    "ELECTRON-LICENSE.txt",
+    "LICENSES.chromium.html",
+    "agencyai-desktop.spdx.json",
+    "agencyai-desktop.cdx.json",
+    "release-manifest.json",
+  ]) {
+    await regularNonSymlinkFile(
+      path.join(resources, "release-metadata", releaseFile),
+      `release metadata ${releaseFile}`,
+    );
+  }
 
   const docsDirectory = path.join(resources, "agencyai-docs");
   validateAgencyAiDocs(docsDirectory);
@@ -716,7 +840,21 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
   const profile = JSON.parse(await readFile(profilePath, "utf8"));
   const appPath = await resolvePackagedMacApp(requestedAppPath);
   const layout = await inspectPackagedLayout(appPath, profile);
-  const discoveryPath = packagedUiControlDiscoveryPath(profile);
+  const fixtureHome = await realpath(await mkdtemp(
+    path.join(tmpdir(), "agencyai-packaged-home-"),
+  ));
+  const expectedStorageRoot = path.join(
+    fixtureHome,
+    "Library",
+    "Application Support",
+    profile.brand.appId,
+  );
+  const discoveryPath = packagedUiControlDiscoveryPath(profile, fixtureHome);
+  const networkAuditPath = path.join(
+    expectedStorageRoot,
+    "logs",
+    "network-audit.jsonl",
+  );
   let previousToken = null;
   try {
     const previousBridge = await readDiscovery(discoveryPath);
@@ -751,12 +889,25 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
   let serverWorkspaceRemoved = false;
   let readStdout = () => "";
   let readStderr = () => "";
+  const networkSamples = [];
   const originalStorageRoot = process.env.OPENWORK_STORAGE_ROOT;
   const originalDiscovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
   try {
     child = spawn(layout.executable, packagedSmokeLaunchArguments(), {
       cwd: desktopRoot,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        HOME: fixtureHome,
+        USERPROFILE: fixtureHome,
+        // Electron resolves appData through macOS Foundation APIs, which do
+        // not consistently honor HOME for GUI processes. This standard
+        // Foundation test override keeps the packaged run inside the same
+        // disposable home without adding a production-only storage bypass.
+        CFFIXED_USER_HOME: fixtureHome,
+        AGENCYAI_NETWORK_AUDIT_MODE: "deny-non-loopback",
+        AGENCYAI_NETWORK_AUDIT_FILE: networkAuditPath,
+      },
     });
     readStdout = captureBoundedText(child.stdout);
     readStderr = captureBoundedText(child.stderr);
@@ -774,6 +925,7 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       waitForBridge(discoveryPath, previousToken),
       childExitedBeforeBridge,
     ]);
+    networkSamples.push(sampleProcessTreeNetwork(child, "bridge-ready"));
     await waitForRendererContext(bridge);
     const browserPolicyBefore = await bridgeJson(
       bridge,
@@ -831,6 +983,27 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       "Packaged app name is not AgencyAI",
     );
     assert(buildInfo?.arch === "arm64", "Packaged app reported the wrong architecture");
+    const notices = await evaluate(
+      client,
+      runtimeExpression("releaseMetadataRead", "THIRD_PARTY_NOTICES.txt"),
+      { awaitPromise: true },
+    );
+    assert(
+      notices?.available === true
+      && notices?.content?.includes("OpenWork attribution and license")
+      && notices?.content?.includes("OpenCode attribution and license"),
+      "Packaged About notices are unavailable",
+    );
+    const sbom = await evaluate(
+      client,
+      runtimeExpression("releaseMetadataRead", "agencyai-desktop.spdx.json"),
+      { awaitPromise: true },
+    );
+    assert(
+      sbom?.available === true
+      && JSON.parse(sbom.content).spdxVersion === "SPDX-2.3",
+      "Packaged About SPDX document is unavailable",
+    );
 
     const initialEngine = await evaluate(
       client,
@@ -901,15 +1074,11 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       "Packaged remote access was enabled",
     );
     assert(
-      runtime.storage.root
-        === path.join(
-          homedir(),
-          "Library",
-          "Application Support",
-          profile.brand.appId,
-        ),
+      await realpath(runtime.storage.root)
+        === await realpath(expectedStorageRoot),
       "Packaged runtime attested the wrong storage root",
     );
+    networkSamples.push(sampleProcessTreeNetwork(child, "runtime-ready"));
 
     const terminal = await ptySmoke(client, workspacePath);
     assert(
@@ -945,13 +1114,9 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       !browserPolicy.target_ids?.includes(appTarget.id),
       "Internal app renderer leaked into the browser authorization list",
     );
+    networkSamples.push(sampleProcessTreeNetwork(child, "browser-fixture"));
 
-    process.env.OPENWORK_STORAGE_ROOT = path.join(
-      homedir(),
-      "Library",
-      "Application Support",
-      profile.brand.appId,
-    );
+    process.env.OPENWORK_STORAGE_ROOT = expectedStorageRoot;
     process.env.OPENWORK_UI_CONTROL_DISCOVERY = discoveryPath;
     const browserBundleUrl =
       `${pathToFileURL(path.join(layout.pluginDirectory, "agencyai-browser-automation.js")).href}`
@@ -1028,6 +1193,7 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       `(async () => window.__OPENWORK_ELECTRON__.browser.closeAllTabs())()`,
       { awaitPromise: true },
     );
+    const networkAudit = await readNetworkAudit(networkAuditPath);
 
     return {
       ok: true,
@@ -1057,7 +1223,23 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       licenses: [
         "OPENWORK-LICENSE.txt",
         "OPENCODE-LICENSE.txt",
+        "THIRD_PARTY_NOTICES.txt",
+        "ELECTRON-LICENSE.txt",
+        "LICENSES.chromium.html",
       ],
+      sboms: [
+        "agencyai-desktop.spdx.json",
+        "agencyai-desktop.cdx.json",
+      ],
+      network: {
+        auditRecords: networkAudit.length,
+        samples: networkSamples.map((sample) => ({
+          stage: sample.stage,
+          processes: sample.processIds.length,
+          endpoints: sample.endpoints.length,
+        })),
+        unexpectedNonLoopback: 0,
+      },
       packagedPlugins: EXPECTED_PLUGIN_NAMES,
       serverWorkspaceRemoved,
     };
@@ -1094,6 +1276,7 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
         await rm(discoveryPath, { force: true });
       }
     }
+    await rm(fixtureHome, { recursive: true, force: true });
     if (originalStorageRoot === undefined) {
       delete process.env.OPENWORK_STORAGE_ROOT;
     } else {

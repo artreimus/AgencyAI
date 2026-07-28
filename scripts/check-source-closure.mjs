@@ -170,7 +170,7 @@ function hasBareRestrictedPathContext(line, repoPath, staticPathValues) {
   );
 }
 
-function isRestrictedRepositoryPath(value) {
+export function isRestrictedRepositoryPath(value) {
   return value
     .replaceAll("\\", "/")
     .split("/")
