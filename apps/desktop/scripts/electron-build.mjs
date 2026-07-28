@@ -13,6 +13,8 @@ const packagedServerRoot = resolve(desktopRoot, "server");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
+const releaseBuild = process.argv.slice(2).includes("--release")
+  || process.env.OPENWORK_RELEASE_BUILD === "1";
 
 function needsShell(command) {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
@@ -32,7 +34,12 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(repoRoot, "scripts", "check-source-closure.mjs")], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/product-config", "build"], repoRoot);
-run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
+run(
+  nodeCmd,
+  [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir],
+  desktopRoot,
+  releaseBuild ? { OPENWORK_RELEASE_BUILD: "1" } : undefined,
+);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);

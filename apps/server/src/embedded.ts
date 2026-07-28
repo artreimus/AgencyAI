@@ -6,6 +6,7 @@
  * of owning the process lifecycle.
  */
 import { mkdir } from "node:fs/promises";
+import { AGENCYAI_OPENCODE_FORK_TAG } from "@openwork/product-config";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import {
   DesktopApprovalCredentialService,
@@ -29,7 +30,10 @@ import {
   type LocalStorageLayoutAttestation,
 } from "./storage-layout-env.js";
 import type { ServeResult } from "./serve-node.js";
-import type { ServerConfig } from "./types.js";
+import type {
+  OpencodeDistributionReadiness,
+  ServerConfig,
+} from "./types.js";
 import {
   isLocalMvpProduct,
   serverFeatureEnabled,
@@ -42,6 +46,12 @@ export type EmbeddedServerOptions = CliArgs & {
   opencodeBin?: string;
   /** Working directory for the managed OpenCode process. */
   opencodeCwd?: string;
+  /** Exact environment constructed by the trusted desktop host. */
+  managedOpencodeEnv?: NodeJS.ProcessEnv;
+  /** Exact version required from the authenticated OpenCode health endpoint. */
+  expectedOpencodeVersion?: string;
+  /** Non-secret provenance for the verified bundled OpenCode runtime. */
+  opencodeDistribution?: OpencodeDistributionReadiness;
 };
 
 export type EmbeddedServerHandle = {
@@ -74,6 +84,31 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   const storage = assertLocalStorageLayoutEnvironment();
   const config = await resolveServerConfig(options);
   const localMvp = isLocalMvpProduct(config.productPolicy);
+  if (options.opencodeDistribution) {
+    config.opencodeDistribution = options.opencodeDistribution;
+  }
+  if (
+    localMvp
+    && options.manageOpencode
+    && (
+      options.opencodeDistribution?.source !== "bundled-patched"
+      || !/^[a-f0-9]{64}$/.test(options.opencodeDistribution.binarySha256)
+      || !/^[a-f0-9]{64}$/.test(
+        options.opencodeDistribution.sourceBinarySha256,
+      )
+      || !/^[a-f0-9]{40}$/.test(options.opencodeDistribution.upstreamCommit)
+      || !/^[a-f0-9]{40}$/.test(options.opencodeDistribution.forkCommit)
+      || options.opencodeDistribution.forkTag
+        !== AGENCYAI_OPENCODE_FORK_TAG
+      || typeof options.opencodeDistribution.patchset !== "string"
+      || !options.opencodeDistribution.patchset.trim()
+      || !/^\d+\.\d+\.\d+$/.test(options.expectedOpencodeVersion ?? "")
+    )
+  ) {
+    throw new Error(
+      "local-mvp managed OpenCode requires verified distribution provenance and an exact version",
+    );
+  }
   const desktopApprovalCredentials = localMvp
     ? new DesktopApprovalCredentialService()
     : null;
@@ -114,6 +149,8 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         excludedPorts: [config.port],
         corsOrigins: config.corsOrigins,
+        parentEnv: options.managedOpencodeEnv,
+        expectedVersion: options.expectedOpencodeVersion,
         env: {
           // Passing the validated path contract explicitly makes the actual
           // child spawn environment observable in its redacted execution

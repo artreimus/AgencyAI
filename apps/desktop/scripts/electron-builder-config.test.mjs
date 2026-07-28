@@ -23,6 +23,8 @@ const afterAllArtifactBuild = desktopRequire(
   "./electron-after-all-artifact-build.cjs",
 );
 const afterPack = desktopRequire("./electron-after-pack.cjs");
+const afterSign = desktopRequire("./electron-after-sign.cjs");
+const electronSign = desktopRequire("./electron-sign.cjs");
 const electronBuilderRequire = createRequire(
   desktopRequire.resolve("electron-builder/package.json"),
 );
@@ -80,6 +82,16 @@ test("platform identity, helper IDs, NSIS identity, and Linux desktop filename a
   assert.equal(config.mac.helperEHBundleId, `${helperId}.eh`);
   assert.equal(config.mac.helperNPBundleId, `${helperId}.np`);
   assert.equal(config.mac.minimumSystemVersion, "14.0");
+  assert.equal(config.mac.sign, "scripts/electron-sign.cjs");
+  assert.equal(Object.hasOwn(config.mac, "signIgnore"), false);
+  assert.deepEqual(configModule.macSigningConfiguration({}), {
+    sign: "scripts/electron-sign.cjs",
+    identity: "-",
+  });
+  assert.deepEqual(
+    configModule.macSigningConfiguration({ CSC_LINK: "certificate" }),
+    { sign: "scripts/electron-sign.cjs" },
+  );
   assert.deepEqual(config.mac.extraResources.at(-1).filter, [
     `${profile.brand.computerUse.bundleName}/**`,
   ]);
@@ -169,8 +181,25 @@ test("desktop packaging no longer references the removed YAML config or upstream
     /electron-builder\.config\.cjs/,
   );
   assert.match(
+    packageMetadata.scripts["package:electron"],
+    /electron-build\.mjs --release/,
+  );
+  assert.match(
     packageMetadata.scripts["package:electron:dir"],
     /electron-builder\.config\.cjs/,
+  );
+  assert.match(
+    packageMetadata.scripts["package:electron:dir"],
+    /electron-build\.mjs --release/,
+  );
+
+  const electronBuildSource = await readFile(
+    resolve(desktopDirectory, "scripts/electron-build.mjs"),
+    "utf8",
+  );
+  assert.match(
+    electronBuildSource,
+    /releaseBuild \? \{ OPENWORK_RELEASE_BUILD: "1" \} : undefined/,
   );
 
   const installer = await readFile(
@@ -200,6 +229,7 @@ test("desktop release workflows use AgencyAI artifacts without updater manifests
     assert.doesNotMatch(workflow, /dist-electron\/latest[^/\s]*\.yml/);
     assert.doesNotMatch(workflow, /dist-electron\/[^\s]*\.blockmap/);
     assert.doesNotMatch(workflow, /publish-electron-assets\.mjs/);
+    assert.match(workflow, /OPENWORK_RELEASE_BUILD/);
   }
 
   assert.match(workflows[0], /agencyai-electron-/);
@@ -264,9 +294,22 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
 
   const appOutDir = await mkdtemp(resolve(tmpdir(), "agencyai-after-pack-"));
   try {
-    const sidecars = resolve(appOutDir, "resources", "sidecars");
-    await mkdir(sidecars, { recursive: true });
+    const resources = resolve(appOutDir, "resources");
+    const sidecars = resolve(resources, "sidecars");
+    const toolchain = resolve(
+      resources,
+      "toolchain",
+      "x86_64-unknown-linux-gnu",
+    );
     await Promise.all([
+      mkdir(sidecars, { recursive: true }),
+      mkdir(toolchain, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(
+        resolve(resources, "opencode-distribution.json"),
+        '{"schemaVersion":1}\n',
+      ),
       writeFile(
         resolve(sidecars, "opencode-x86_64-unknown-linux-gnu"),
         "opencode-x64",
@@ -287,6 +330,8 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
         "opencode-arm64",
       ),
       writeFile(resolve(sidecars, "stale-sidecar"), "stale"),
+      writeFile(resolve(toolchain, "rg"), "ripgrep-x64"),
+      writeFile(resolve(toolchain, "LICENSE-ripgrep"), "MIT"),
     ]);
 
     await afterPack({
@@ -309,9 +354,94 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
       await readFile(resolve(sidecars, "openwork-orchestrator"), "utf8"),
       "orchestrator-x64",
     );
+    const integrity = JSON.parse(
+      await readFile(
+        resolve(resources, "packaged-runtime-integrity.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(integrity.hashPhase, "post-nested-signing");
+    assert.equal(integrity.target, "x86_64-unknown-linux-gnu");
+    assert.deepEqual(
+      integrity.files.map((entry) => entry.path),
+      [
+        "sidecars/opencode",
+        "sidecars/opencode-x86_64-unknown-linux-gnu",
+        "toolchain/x86_64-unknown-linux-gnu/rg",
+        "toolchain/x86_64-unknown-linux-gnu/LICENSE-ripgrep",
+      ],
+    );
   } finally {
     await rm(appOutDir, { recursive: true, force: true });
   }
+});
+
+test("custom signing ignores only exact pre-signed runtime paths", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "agencyai-sign-ignore-"));
+  try {
+    const exact = resolve(root, "AgencyAI.app", "Contents", "Resources", "sidecars", "opencode");
+    const sibling = `${exact}-unexpected`;
+    const nested = resolve(
+      root,
+      "AgencyAI.app",
+      "Contents",
+      "Resources",
+      "helpers",
+      "Evil.app",
+      "Contents",
+      "Resources",
+      "sidecars",
+      "opencode",
+    );
+    await Promise.all([
+      mkdir(dirname(exact), { recursive: true }),
+      mkdir(dirname(nested), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(exact, "exact"),
+      writeFile(sibling, "sibling"),
+      writeFile(nested, "nested"),
+    ]);
+
+    const ignore = electronSign.canonicalExactIgnore([exact]);
+    assert.equal(ignore(exact), true);
+    assert.equal(ignore(sibling), false);
+    assert.equal(ignore(nested), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("notarization accepts only Developer ID metadata with a Team ID", () => {
+  assert.deepEqual(
+    afterSign.parseSignatureMetadata(
+      [
+        "Authority=Developer ID Application: AgencyAI LLC (A1B2C3D4E5)",
+        "TeamIdentifier=A1B2C3D4E5",
+      ].join("\n"),
+      "AgencyAI app",
+      true,
+    ),
+    { teamIdentifier: "A1B2C3D4E5" },
+  );
+  assert.throws(
+    () =>
+      afterSign.parseSignatureMetadata(
+        "Signature=adhoc\nTeamIdentifier=not set",
+        "AgencyAI app",
+        true,
+      ),
+    /ad-hoc signed/,
+  );
+  assert.throws(
+    () =>
+      afterSign.parseSignatureMetadata(
+        "Authority=Apple Development: Example\nTeamIdentifier=A1B2C3D4E5",
+        "AgencyAI app",
+        true,
+      ),
+    /not signed by a Developer ID Application/,
+  );
 });
 
 test("inherited publish workflows are manual-only and cannot publish from AgencyAI", async () => {
@@ -452,7 +582,7 @@ test("computer-use helper callsites consume the selected product identity", asyn
   const callsitePaths = [
     "../electron/computer-use.mjs",
     "prepare-computer-use-helper.mjs",
-    "electron-after-pack.cjs",
+    "electron-sign.cjs",
     "electron-after-sign.cjs",
     "../../../packages/handsfree/native/HandsFree/Sources/ComputerUse/PermissionSetupApp.swift",
     "../../../packages/handsfree/test/e2e/run.mjs",

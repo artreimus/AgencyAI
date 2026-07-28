@@ -9,6 +9,8 @@ type MutableLocalOpencodeConfig = {
   provider?: unknown;
   mcp?: unknown;
   experimental?: unknown;
+  instructions?: unknown;
+  skills?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,6 +51,33 @@ export function withLocalMvpRequiredDisabledProviders(
     : [...providers, LOCAL_MVP_HOSTED_PROVIDER_ID];
 }
 
+function isRemoteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function withoutRemoteInstructionUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is string =>
+      typeof entry === "string" && !isRemoteHttpUrl(entry),
+  );
+}
+
+export function withoutRemoteSkillUrls(
+  value: unknown,
+): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const paths = Array.isArray(value.paths)
+    ? value.paths.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return paths.length ? { paths } : {};
+}
+
 /**
  * Final defense-in-depth hook for OpenCode's fully merged config. The wrapper
  * also validates its own write APIs, but config files may predate AgencyAI or
@@ -63,6 +92,8 @@ export function enforceAgencyAiLocalRuntimePolicy(
     config.disabled_providers,
   );
   config.provider = withoutLocalMvpBlockedProviders(config.provider);
+  config.instructions = withoutRemoteInstructionUrls(config.instructions);
+  config.skills = withoutRemoteSkillUrls(config.skills);
 
   if (isRecord(config.mcp)) {
     for (const name of Object.keys(config.mcp)) {

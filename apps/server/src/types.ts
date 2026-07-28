@@ -83,6 +83,16 @@ export interface ApprovalConfig {
   timeoutMs: number;
 }
 
+export type OpencodeDistributionReadiness = Readonly<{
+  source: "bundled-patched";
+  binarySha256: string;
+  sourceBinarySha256: string;
+  upstreamCommit: string;
+  forkCommit: string;
+  forkTag: string;
+  patchset: string;
+}>;
+
 export type QuarantinedLocalOpencodeWorkspaceConfig = Readonly<{
   workspaceId: string;
   config: Readonly<Record<string, unknown>>;
@@ -110,6 +120,8 @@ export interface ServerConfig {
   logRequests: boolean;
   /** Immutable build policy projected into the server process. */
   productPolicy?: ServerProductPolicy;
+  /** Non-secret provenance for the verified bundled OpenCode runtime. */
+  opencodeDistribution?: OpencodeDistributionReadiness;
   /**
    * Remote records excluded from the effective local runtime. They remain
    * available only for fail-closed lookup and must never be contacted.

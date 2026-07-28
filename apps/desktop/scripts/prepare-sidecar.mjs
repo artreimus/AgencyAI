@@ -1,15 +1,16 @@
 import { spawnSync } from "child_process";
-import { createHash } from "crypto";
 import {
   chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
   readdirSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -17,6 +18,21 @@ import {
 import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
+import {
+  currentTargetTriple,
+  distributionTarget,
+  loadOpencodeDistributionSync,
+  sha256FileSync,
+  verifyOpencodeBinarySync,
+  verifyRipgrepBinarySync,
+} from "../electron/opencode-distribution.mjs";
+import {
+  assertExtractedTreeSafeSync,
+  preflightSidecarArchiveSync,
+} from "./archive-policy.mjs";
+import {
+  verifyOpenCodeWorkflowArtifactEvidenceSync,
+} from "./opencode-artifact-evidence.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const readArg = (name) => {
@@ -32,22 +48,12 @@ const hasFlag = (name) => process.argv.slice(2).includes(name);
 const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "resources", "sidecars");
+const desktopRoot = resolve(__dirname, "..");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
-
-const opencodeGithubRepo = (() => {
-  const raw =
-    process.env.OPENCODE_GITHUB_REPO?.trim() ||
-    process.env.OPENWORK_OPENCODE_GITHUB_REPO?.trim() ||
-    "anomalyco/opencode";
-  const normalized = raw
-    .replace(/^https:\/\/github\.com\//i, "")
-    .replace(/\.git$/i, "")
-    .trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)) {
-    return "anomalyco/opencode";
-  }
-  return normalized;
-})();
+const distribution = loadOpencodeDistributionSync({
+  desktopRoot,
+  isPackaged: false,
+}).manifest;
 const opencodeVersion = (() => {
   try {
     const raw = readFileSync(constantsPath, "utf8");
@@ -65,8 +71,6 @@ const normalizeVersion = (value) => {
   return raw.startsWith("v") ? raw.slice(1) : raw;
 };
 
-const opencodeAssetOverride = process.env.OPENCODE_ASSET?.trim() || null;
-
 // Target triple for native platform binaries
 const resolvedTargetTriple = (() => {
   const envTarget =
@@ -74,17 +78,9 @@ const resolvedTargetTriple = (() => {
     process.env.CARGO_CFG_TARGET_TRIPLE ??
     process.env.TARGET;
   if (envTarget) return envTarget;
-  if (process.platform === "darwin") {
-    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
-  }
-  if (process.platform === "linux") {
-    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
-  }
-  if (process.platform === "win32") {
-    return process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
-  }
-  return null;
+  return currentTargetTriple();
 })();
+const targetDistribution = distributionTarget(distribution, resolvedTargetTriple);
 const isWindowsTarget = process.platform === "win32" || resolvedTargetTriple?.includes("windows") === true;
 
 const bunTarget = (() => {
@@ -116,7 +112,6 @@ const opencodeTargetName = resolvedTargetTriple
 const opencodeTargetPath = opencodeTargetName ? join(sidecarDir, opencodeTargetName) : null;
 
 const opencodeCandidatePath = opencodeTargetPath ?? opencodePath;
-let existingOpencodeVersion = null;
 
 // openwork-server paths
 const openworkServerBaseName = "openwork-server";
@@ -213,22 +208,6 @@ const findOpencodeBinary = (dir) => {
   );
 };
 
-const readBinaryVersion = (filePath) => {
-  try {
-    const result = spawnSync(filePath, ["--version"], { encoding: "utf8" });
-    if (result.status === 0 && result.stdout) return result.stdout.trim();
-  } catch {
-    // ignore
-  }
-  return null;
-};
-
-const sha256File = (filePath) => {
-  const hash = createHash("sha256");
-  hash.update(readFileSync(filePath));
-  return hash.digest("hex");
-};
-
 const adHocSignDarwin = (filePath) => {
   if (process.platform !== "darwin" || !filePath || !existsSync(filePath)) return;
   const remove = spawnSync("codesign", ["--remove-signature", filePath], {
@@ -260,32 +239,11 @@ const adHocSignDarwinSidecars = (paths) => {
   }
 };
 
-const parseChecksum = (content, assetName) => {
-  const lines = content.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [hash, name] = trimmed.split(/\s+/);
-    if (name === assetName) return hash.toLowerCase();
-    if (trimmed.endsWith(` ${assetName}`)) {
-      return trimmed.split(/\s+/)[0]?.toLowerCase() ?? null;
-    }
-  }
-  return null;
-};
-
 // openwork-server is no longer compiled as a sidecar binary — it runs
 // in-process inside Electron via a direct import of the server library.
 const didBuildOpenworkServer = false;
 
 // Server binary copy/sign skipped — runs in-process.
-
-if (!existingOpencodeVersion && opencodeCandidatePath) {
-  existingOpencodeVersion =
-    existsSync(opencodeCandidatePath) && !isStubBinary(opencodeCandidatePath)
-      ? readBinaryVersion(opencodeCandidatePath)
-      : null;
-}
 
 const normalizedOpencodeVersion = normalizeVersion(opencodeVersion);
 
@@ -296,119 +254,298 @@ if (!normalizedOpencodeVersion) {
   process.exit(1);
 }
 
-const opencodeAssetByTarget = {
-  "aarch64-apple-darwin": "opencode-darwin-arm64.zip",
-  "x86_64-apple-darwin": "opencode-darwin-x64-baseline.zip",
-  "x86_64-unknown-linux-gnu": "opencode-linux-x64-baseline.tar.gz",
-  "aarch64-unknown-linux-gnu": "opencode-linux-arm64.tar.gz",
-  "x86_64-pc-windows-msvc": "opencode-windows-x64-baseline.zip",
-  "aarch64-pc-windows-msvc": "opencode-windows-arm64.zip",
-};
-
-const opencodeAsset =
-  opencodeAssetOverride ?? (resolvedTargetTriple ? opencodeAssetByTarget[resolvedTargetTriple] : null);
-
-const opencodeUrl = opencodeAsset
-  ? `https://github.com/${opencodeGithubRepo}/releases/download/v${normalizedOpencodeVersion}/${opencodeAsset}`
-  : null;
-
-const shouldDownloadOpencode =
-  !opencodeCandidatePath ||
-  !existsSync(opencodeCandidatePath) ||
-  isStubBinary(opencodeCandidatePath) ||
-  !existingOpencodeVersion ||
-  existingOpencodeVersion !== normalizedOpencodeVersion;
-
-if (!shouldDownloadOpencode) {
-  console.log(`OpenCode sidecar already present (${existingOpencodeVersion}).`);
+if (normalizedOpencodeVersion !== distribution.binaryVersion) {
+  console.error(
+    `constants.json OpenCode ${normalizedOpencodeVersion} does not match distribution ${distribution.binaryVersion}.`,
+  );
+  process.exit(1);
 }
 
-if (shouldDownloadOpencode) {
-  if (!opencodeAsset || !opencodeUrl) {
+for (const name of [
+  "OPENCODE_ASSET",
+  "OPENCODE_GITHUB_REPO",
+  "OPENWORK_OPENCODE_GITHUB_REPO",
+]) {
+  if (process.env[name]?.trim()) {
     console.error(
-      `No OpenCode asset configured for target ${resolvedTargetTriple ?? "unknown"}. Set OPENCODE_ASSET to override.`
+      `${name} is disabled. AgencyAI resolves OpenCode only from opencode-distribution.json.`,
     );
     process.exit(1);
   }
+}
 
-  mkdirSync(sidecarDir, { recursive: true });
+const productionPackaging = process.env.OPENWORK_RELEASE_BUILD === "1";
+const taskTempRoot = mkdtempSync(join(tmpdir(), "agencyai-sidecar-"));
+process.once("exit", () => {
+  rmSync(taskTempRoot, { recursive: true, force: true });
+});
 
-  const stamp = Date.now();
-  const archivePath = join(tmpdir(), `opencode-${stamp}-${opencodeAsset}`);
-  const extractDir = join(tmpdir(), `opencode-${stamp}`);
+const runChecked = (command, args, options = {}) => {
+  const result = spawnSync(command, args, {
+    stdio: options.stdio ?? "inherit",
+    encoding: options.encoding,
+    shell: false,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with status ${result.status ?? -1}`,
+    );
+  }
+  return result;
+};
 
+const readGithubJson = (endpoint, label) => {
+  const result = runChecked("gh", ["api", endpoint], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `${label} did not return valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+};
+
+const assertExpectedHash = (filePath, expected, label) => {
+  const actual = sha256FileSync(filePath);
+  if (actual !== expected) {
+    throw new Error(
+      `${label} hash mismatch: expected ${expected}, received ${actual}`,
+    );
+  }
+  return actual;
+};
+
+const resolveLocalArchiveOverride = (name) => {
+  const value = process.env[name]?.trim();
+  if (!value) return null;
+  if (productionPackaging) {
+    throw new Error(`${name} is forbidden for production packaging`);
+  }
+  const filePath = resolve(value);
+  if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+    throw new Error(`${name} does not point to a regular file`);
+  }
+  return filePath;
+};
+
+const extractArchive = (archivePath, extractDir) => {
+  preflightSidecarArchiveSync(archivePath);
   mkdirSync(extractDir, { recursive: true });
+  if (archivePath.endsWith(".zip")) {
+    if (process.platform === "win32") {
+      const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
+      runChecked("powershell", [
+        "-NoProfile",
+        "-Command",
+        [
+          "$ErrorActionPreference = 'Stop'",
+          `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
+        ].join("; "),
+      ]);
+      assertExtractedTreeSafeSync(extractDir);
+      return;
+    }
+    runChecked("unzip", ["-q", archivePath, "-d", extractDir]);
+    assertExtractedTreeSafeSync(extractDir);
+    return;
+  }
+  if (archivePath.endsWith(".tar.gz")) {
+    runChecked("tar", ["-xzf", archivePath, "-C", extractDir]);
+    assertExtractedTreeSafeSync(extractDir);
+    return;
+  }
+  throw new Error(`Unsupported verified archive type: ${archivePath}`);
+};
 
+const downloadUrl = (url, destination) => {
   if (process.platform === "win32") {
     const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
-    const psScript = [
-      "$ErrorActionPreference = 'Stop'",
-      `Invoke-WebRequest -Uri ${psQuote(opencodeUrl)} -OutFile ${psQuote(archivePath)}`,
-      `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
-    ].join("; ");
-
-    const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
-      stdio: "inherit",
-    });
-
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
-    }
-  } else {
-    const downloadResult = spawnSync("curl", ["-fsSL", "-o", archivePath, opencodeUrl], {
-      stdio: "inherit",
-    });
-    if (downloadResult.status !== 0) {
-      process.exit(downloadResult.status ?? 1);
-    }
-
-    mkdirSync(extractDir, { recursive: true });
-
-    if (opencodeAsset.endsWith(".zip")) {
-      const unzipResult = spawnSync("unzip", ["-q", archivePath, "-d", extractDir], {
-        stdio: "inherit",
-      });
-      if (unzipResult.status !== 0) {
-        process.exit(unzipResult.status ?? 1);
-      }
-    } else if (opencodeAsset.endsWith(".tar.gz")) {
-      const tarResult = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir], {
-        stdio: "inherit",
-      });
-      if (tarResult.status !== 0) {
-        process.exit(tarResult.status ?? 1);
-      }
-    } else {
-      console.error(`Unknown OpenCode archive type: ${opencodeAsset}`);
-      process.exit(1);
-    }
+    runChecked("powershell", [
+      "-NoProfile",
+      "-Command",
+      [
+        "$ErrorActionPreference = 'Stop'",
+        `Invoke-WebRequest -Uri ${psQuote(url)} -OutFile ${psQuote(destination)}`,
+      ].join("; "),
+    ]);
+    return;
   }
+  runChecked("curl", ["-fsSL", "-o", destination, url]);
+};
 
-  const extractedBinary = findOpencodeBinary(extractDir);
-  if (!extractedBinary) {
-    console.error("OpenCode binary not found after extraction.");
-    process.exit(1);
+const downloadManifestOpenCodeArchive = (asset) => {
+  if (Date.now() >= Date.parse(asset.artifactExpiresAt)) {
+    throw new Error(
+      `The manifest-pinned private OpenCode workflow artifact expired at ${asset.artifactExpiresAt}. Rebuild and review PR04 provenance before packaging.`,
+    );
   }
+  const repository = new URL(distribution.sourceRepository).pathname
+    .replace(/^\/+/, "");
+  const artifactMetadata = readGithubJson(
+    `repos/${repository}/actions/artifacts/${asset.artifactId}`,
+    "GitHub OpenCode artifact metadata",
+  );
+  const workflowRunMetadata = readGithubJson(
+    `repos/${repository}/actions/runs/${asset.workflowRunId}`,
+    "GitHub OpenCode workflow run metadata",
+  );
+  const downloadDir = join(taskTempRoot, "opencode-workflow-artifact");
+  mkdirSync(downloadDir, { recursive: true });
+  runChecked("gh", [
+    "run",
+    "download",
+    String(asset.workflowRunId),
+    "--repo",
+    repository,
+    "--name",
+    asset.artifactName,
+    "--dir",
+    downloadDir,
+  ]);
+  verifyOpenCodeWorkflowArtifactEvidenceSync({
+    artifactDirectory: downloadDir,
+    distribution,
+    target: resolvedTargetTriple,
+    artifactMetadata,
+    workflowRunMetadata,
+  });
+  const archivePath = join(downloadDir, asset.archive);
+  if (!existsSync(archivePath)) {
+    throw new Error(
+      `Workflow artifact ${asset.artifactName} did not contain ${asset.archive}`,
+    );
+  }
+  return archivePath;
+};
 
-  const opencodeTargets = [opencodeTargetPath, opencodePath].filter(Boolean);
-  for (const target of opencodeTargets) {
-    try {
-      if (existsSync(target)) {
-        unlinkSync(target);
-      }
-    } catch {
-      // ignore
-    }
-    copyFileSync(extractedBinary, target);
+const copyExecutable = (source, targets) => {
+  for (const target of [...new Set(targets.filter(Boolean))]) {
+    mkdirSync(dirname(target), { recursive: true });
+    if (existsSync(target)) unlinkSync(target);
+    copyFileSync(source, target);
     try {
       chmodSync(target, 0o755);
     } catch {
-      // ignore
+      // Some Windows filesystems ignore chmod.
     }
   }
+};
 
-  console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
+const opencodeAsset = targetDistribution.opencode;
+let verifiedExistingOpenCode = false;
+if (opencodeCandidatePath && existsSync(opencodeCandidatePath)) {
+  try {
+    verifyOpencodeBinarySync(opencodeCandidatePath, opencodeAsset);
+    verifiedExistingOpenCode = true;
+  } catch {
+    verifiedExistingOpenCode = false;
+  }
 }
+
+if (!verifiedExistingOpenCode) {
+  const archivePath =
+    resolveLocalArchiveOverride("AGENCYAI_OPENCODE_ARCHIVE_PATH")
+    ?? downloadManifestOpenCodeArchive(opencodeAsset);
+  assertExpectedHash(
+    archivePath,
+    opencodeAsset.sourceArchiveSha256,
+    "OpenCode archive",
+  );
+  const extractDir = join(taskTempRoot, "opencode-extracted");
+  extractArchive(archivePath, extractDir);
+  const extractedBinary = findOpencodeBinary(extractDir);
+  if (!extractedBinary) {
+    throw new Error("Verified OpenCode archive did not contain an OpenCode binary");
+  }
+  verifyOpencodeBinarySync(extractedBinary, opencodeAsset);
+  copyExecutable(extractedBinary, [opencodeTargetPath, opencodePath]);
+}
+
+for (const target of [opencodeTargetPath, opencodePath].filter(Boolean)) {
+  verifyOpencodeBinarySync(target, opencodeAsset);
+}
+console.log(`Verified OpenCode ${normalizedOpencodeVersion} from ${distribution.forkCommit}.`);
+
+const ripgrepAsset = targetDistribution.ripgrep;
+const toolchainDir = join(
+  desktopRoot,
+  "resources",
+  "toolchain",
+  resolvedTargetTriple,
+);
+const ripgrepPath = join(
+  toolchainDir,
+  isWindowsTarget ? "rg.exe" : "rg",
+);
+const ripgrepLicensePath = join(toolchainDir, "LICENSE-ripgrep");
+let verifiedExistingRipgrep = false;
+if (existsSync(ripgrepPath) && existsSync(ripgrepLicensePath)) {
+  try {
+    verifyRipgrepBinarySync(ripgrepPath, ripgrepAsset);
+    assertExpectedHash(
+      ripgrepLicensePath,
+      ripgrepAsset.licenseSha256,
+      "ripgrep MIT license",
+    );
+    verifiedExistingRipgrep = true;
+  } catch {
+    verifiedExistingRipgrep = false;
+  }
+}
+
+if (!verifiedExistingRipgrep) {
+  const override = resolveLocalArchiveOverride("AGENCYAI_RIPGREP_ARCHIVE_PATH");
+  const archivePath = override ?? join(taskTempRoot, ripgrepAsset.archive);
+  if (!override) downloadUrl(ripgrepAsset.url, archivePath);
+  assertExpectedHash(
+    archivePath,
+    ripgrepAsset.sourceArchiveSha256,
+    "ripgrep archive",
+  );
+  const extractDir = join(taskTempRoot, "ripgrep-extracted");
+  extractArchive(archivePath, extractDir);
+  const extractedBinary = readDirectory(extractDir).find(
+    (filePath) =>
+      filePath.endsWith(`/${ripgrepAsset.binary}`)
+      || filePath.endsWith(`\\${ripgrepAsset.binary}`),
+  );
+  if (!extractedBinary) {
+    throw new Error("Verified ripgrep archive did not contain rg");
+  }
+  const extractedLicense = readDirectory(extractDir).find(
+    (filePath) =>
+      filePath.endsWith(`/${ripgrepAsset.licenseFile}`)
+      || filePath.endsWith(`\\${ripgrepAsset.licenseFile}`),
+  );
+  if (!extractedLicense) {
+    throw new Error(
+      `Verified ripgrep archive did not contain ${ripgrepAsset.licenseFile}`,
+    );
+  }
+  verifyRipgrepBinarySync(extractedBinary, ripgrepAsset);
+  assertExpectedHash(
+    extractedLicense,
+    ripgrepAsset.licenseSha256,
+    "ripgrep MIT license",
+  );
+  copyExecutable(extractedBinary, [ripgrepPath]);
+  mkdirSync(toolchainDir, { recursive: true });
+  if (existsSync(ripgrepLicensePath)) unlinkSync(ripgrepLicensePath);
+  copyFileSync(extractedLicense, ripgrepLicensePath);
+}
+verifyRipgrepBinarySync(ripgrepPath, ripgrepAsset);
+assertExpectedHash(
+  ripgrepLicensePath,
+  ripgrepAsset.licenseSha256,
+  "ripgrep MIT license",
+);
+console.log(`Verified packaged ripgrep ${ripgrepAsset.version}.`);
 
 // Build orchestrator sidecar
 let didBuildOrchestrator = false;
@@ -484,8 +621,6 @@ if (existsSync(orchestratorBuildPath)) {
 }
 
 adHocSignDarwinSidecars([
-  opencodePath,
-  opencodeTargetPath,
   // openwork-server runs in-process — no binary to sign.
   orchestratorBuildPath,
   orchestratorPath,
@@ -513,7 +648,13 @@ const orchestratorVersion = (() => {
 const versions = {
   opencode: {
     version: normalizedOpencodeVersion,
-    sha256: opencodeCandidatePath && existsSync(opencodeCandidatePath) ? sha256File(opencodeCandidatePath) : null,
+    sha256: opencodeCandidatePath && existsSync(opencodeCandidatePath)
+      ? sha256FileSync(opencodeCandidatePath)
+      : null,
+    source: "bundled-patched",
+    upstreamCommit: distribution.upstreamCommit,
+    forkCommit: distribution.forkCommit,
+    patchset: distribution.patchset,
   },
   "openwork-server": {
     version: openworkServerVersion,
@@ -521,7 +662,15 @@ const versions = {
   },
   "openwork-orchestrator": {
     version: orchestratorVersion,
-    sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
+    sha256: existsSync(orchestratorPath)
+      ? sha256FileSync(orchestratorPath)
+      : null,
+  },
+  ripgrep: {
+    version: ripgrepAsset.version,
+    sha256: existsSync(ripgrepPath) ? sha256FileSync(ripgrepPath) : null,
+    source: ripgrepAsset.url,
+    license: distribution.toolchain.ripgrep.license,
   },
 };
 

@@ -54,6 +54,19 @@ describe("local-mvp generated OpenCode config", () => {
         allowedLocalSetting: "preserved",
         openTelemetry: true,
       },
+      instructions: [
+        "./LOCAL.md",
+        "/absolute/local.md",
+        "https://instructions.invalid/AGENTS.md",
+        "HTTP://instructions.invalid/mixed-case",
+      ],
+      skills: {
+        paths: ["./.opencode/skills", "/absolute/local-skills"],
+        urls: [
+          "https://skills.invalid/.well-known/skills/",
+          "http://127.0.0.1:43210/skills",
+        ],
+      },
       plugin: [
         "/plugins/user-plugin.ts",
         "/plugins/openwork-extensions-preview.ts",
@@ -87,6 +100,13 @@ describe("local-mvp generated OpenCode config", () => {
     expect(generated.experimental).toEqual({
       allowedLocalSetting: "preserved",
       openTelemetry: false,
+    });
+    expect(generated.instructions).toEqual([
+      "./LOCAL.md",
+      "/absolute/local.md",
+    ]);
+    expect(generated.skills).toEqual({
+      paths: ["./.opencode/skills", "/absolute/local-skills"],
     });
     expect(generated.provider).toEqual({
       local: {

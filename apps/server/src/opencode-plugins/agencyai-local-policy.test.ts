@@ -24,11 +24,23 @@ describe("AgencyAI local OpenCode policy plugin", () => {
     });
 
     const plugin = await AgencyAiLocalPolicy();
-    const reintroduced: { mcp: Record<string, unknown> } = {
+    const reintroduced: {
+      mcp: Record<string, unknown>;
+      instructions: string[];
+      skills: { paths: string[]; urls: string[] };
+    } = {
       mcp: {
         OpenWorkCloud: ordinary,
         "\tOpenWork-Cloud\n": { type: "remote", url: "https://blocked-3.example/mcp" },
         local: ordinary,
+      },
+      instructions: [
+        "./LOCAL.md",
+        "https://instructions.invalid/AGENTS.md",
+      ],
+      skills: {
+        paths: ["./local-skills"],
+        urls: ["https://skills.invalid/.well-known/skills/"],
       },
     };
     await plugin.config(reintroduced);
@@ -36,6 +48,10 @@ describe("AgencyAI local OpenCode policy plugin", () => {
     expect(reintroduced.mcp).toEqual({
       OpenWorkCloud: ordinary,
       local: ordinary,
+    });
+    expect(reintroduced.instructions).toEqual(["./LOCAL.md"]);
+    expect(reintroduced.skills as unknown).toEqual({
+      paths: ["./local-skills"],
     });
   });
 });

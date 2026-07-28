@@ -76,6 +76,76 @@ async function findFreePort(hostname: string, excludedPorts: number[] = []): Pro
   throw new Error("Failed to resolve free port outside the excluded set");
 }
 
+export async function waitForManagedOpencodeReady(options: {
+  url: string;
+  username: string;
+  password: string;
+  expectedVersion: string;
+  timeoutMs: number;
+  fetchImpl?: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  isAlive?: () => boolean;
+  startupOutput?: () => string;
+}): Promise<void> {
+  const deadline = Date.now() + options.timeoutMs;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const authorization = `Basic ${Buffer.from(
+    `${options.username}:${options.password}`,
+  ).toString("base64")}`;
+  let lastError = "OpenCode readiness probe did not succeed";
+
+  while (Date.now() < deadline) {
+    if (options.isAlive && !options.isAlive()) {
+      const output = options.startupOutput?.().trim();
+      throw new Error(
+        `OpenCode server exited before readiness${output ? `\n${output}` : ""}`,
+      );
+    }
+    try {
+      const response = await fetchImpl(
+        `${options.url.replace(/\/+$/, "")}/global/health`,
+        {
+          headers: {
+            Accept: "application/json",
+            Authorization: authorization,
+          },
+          redirect: "error",
+          signal: AbortSignal.timeout(
+            Math.min(1_000, Math.max(1, options.timeoutMs)),
+          ),
+        },
+      );
+      const payload = response.ok ? await response.json() as unknown : null;
+      if (
+        response.ok
+        && payload
+        && typeof payload === "object"
+        && !Array.isArray(payload)
+        && Object.keys(payload).sort().join(",") === "healthy,version"
+        && (payload as Record<string, unknown>).healthy === true
+        && (payload as Record<string, unknown>).version === options.expectedVersion
+      ) {
+        return;
+      }
+      lastError = response.ok
+        ? "OpenCode health response did not match the pinned runtime contract"
+        : `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  const output = options.startupOutput?.().trim();
+  throw new Error(
+    `Timeout waiting for exact OpenCode ${options.expectedVersion} readiness: ${lastError}${
+      output ? `\n${output}` : ""
+    }`,
+  );
+}
+
 export async function createManagedOpencodeServer(options: {
   bin?: string;
   cwd: string;
@@ -84,13 +154,15 @@ export async function createManagedOpencodeServer(options: {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  parentEnv?: NodeJS.ProcessEnv;
   corsOrigins?: string[];
+  expectedVersion?: string;
 }): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
   const username = randomSecret();
   const password = randomSecret();
-  const corsOrigins = options.corsOrigins?.filter((origin) => origin.trim()) ?? ["*"];
+  const corsOrigins = options.corsOrigins?.filter((origin) => origin.trim()) ?? [];
   const args = [
     "serve",
     "--hostname",
@@ -101,7 +173,7 @@ export async function createManagedOpencodeServer(options: {
   ];
   const command = options.bin?.trim() || "opencode";
   const env = {
-    ...process.env,
+    ...(options.parentEnv ?? process.env),
     ...options.env,
     OPENCODE_SERVER_USERNAME: username,
     OPENCODE_SERVER_PASSWORD: password,
@@ -118,7 +190,7 @@ export async function createManagedOpencodeServer(options: {
       redacted: isSecretEnvironmentName(name),
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
-  const child: ChildProcess = spawn(options.bin?.trim() || "opencode", args, {
+  const child: ChildProcess = spawn(command, args, {
     cwd: options.cwd,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -129,7 +201,39 @@ export async function createManagedOpencodeServer(options: {
     child.once("exit", () => resolve());
   });
 
-  const url = await new Promise<string>((resolve, reject) => {
+  let startupOutput = "";
+  const appendStartupOutput = (chunk: unknown) => {
+    startupOutput += String(chunk);
+    if (startupOutput.length > 8_000) {
+      startupOutput = startupOutput.slice(startupOutput.length - 8_000);
+    }
+  };
+
+  let url: string;
+  if (options.expectedVersion) {
+    const urlHostname = hostname.includes(":") ? `[${hostname}]` : hostname;
+    url = `http://${urlHostname}:${port}`;
+    child.stdout?.on("data", appendStartupOutput);
+    child.stderr?.on("data", appendStartupOutput);
+    try {
+      await waitForManagedOpencodeReady({
+        url,
+        username,
+        password,
+        expectedVersion: options.expectedVersion,
+        timeoutMs: options.timeoutMs ?? 15_000,
+        isAlive: () =>
+          child.exitCode === null
+          && child.signalCode === null
+          && !child.killed,
+        startupOutput: () => startupOutput,
+      });
+    } catch (error) {
+      if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
+      throw error;
+    }
+  } else {
+    url = await new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
     let output = "";
     const done = (value: string) => {
@@ -154,7 +258,8 @@ export async function createManagedOpencodeServer(options: {
     });
     child.once("error", fail);
     child.once("exit", (code) => fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output}` : ""}`)));
-  });
+    });
+  }
 
   return {
     url,

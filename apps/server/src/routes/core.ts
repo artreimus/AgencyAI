@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { AGENCYAI_OPENCODE_FORK_TAG } from "@openwork/product-config";
 import {
   type ConnectSnapshotOptions,
   getConnectSnapshot,
@@ -133,6 +134,7 @@ const OPENCODE_READINESS_TIMEOUT_MS = 2_000;
 async function probeLocalOpencodeReadiness(
   config: ServerConfig,
   createWorkspaceOpencodeClient: RegisterCoreRoutesOptions["createWorkspaceOpencodeClient"],
+  expectedVersion: string,
 ): Promise<{ loopback: boolean; healthy: boolean }> {
   if (config.workspaces.length === 0) {
     return { loopback: false, healthy: false };
@@ -154,7 +156,9 @@ async function probeLocalOpencodeReadiness(
       ).global.health({
         signal: AbortSignal.timeout(OPENCODE_READINESS_TIMEOUT_MS),
       });
-      return result.response.ok && result.data?.healthy === true;
+      return result.response.ok
+        && result.data?.healthy === true
+        && result.data?.version === expectedVersion;
     } catch {
       return false;
     }
@@ -227,8 +231,21 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       const opencode = await probeLocalOpencodeReadiness(
         config,
         createWorkspaceOpencodeClient,
+        opencodeVersion,
       );
-      const ready = openworkLoopback && opencode.loopback && opencode.healthy;
+      const provenance = config.opencodeDistribution;
+      const provenanceVerified = provenance?.source === "bundled-patched"
+        && /^[a-f0-9]{64}$/.test(provenance.binarySha256)
+        && /^[a-f0-9]{64}$/.test(provenance.sourceBinarySha256)
+        && /^[a-f0-9]{40}$/.test(provenance.upstreamCommit)
+        && /^[a-f0-9]{40}$/.test(provenance.forkCommit)
+        && provenance.forkTag === AGENCYAI_OPENCODE_FORK_TAG
+        && typeof provenance.patchset === "string"
+        && provenance.patchset.trim().length > 0;
+      const ready = openworkLoopback
+        && opencode.loopback
+        && opencode.healthy
+        && provenanceVerified;
       return jsonResponse({
         ready,
         productProfile: productPolicy.profile,
@@ -245,6 +262,13 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
         opencode: {
           version: opencodeVersion,
           healthy: opencode.healthy,
+          source: provenance?.source ?? "unverified",
+          binarySha256: provenance?.binarySha256 ?? null,
+          sourceBinarySha256: provenance?.sourceBinarySha256 ?? null,
+          upstreamCommit: provenance?.upstreamCommit ?? null,
+          forkCommit: provenance?.forkCommit ?? null,
+          forkTag: provenance?.forkTag ?? null,
+          patchset: provenance?.patchset ?? null,
         },
         modelCatalog: {
           source: "opencode-embedded",

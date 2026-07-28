@@ -1,21 +1,31 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  buildLocalMvpOpenCodeChildEnv,
   commandMatchesPackagedSidecar,
   createRuntimeManager,
   embeddedServerImportUrl,
   mergeRuntimeChildEnv,
   prioritizeWorkspacePaths,
+  resolveAgencyAiTrustedPluginPaths,
   resolveRuntimeRemoteAccessEnabled,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
+  waitForExactOpencodeHealth,
 } from "./runtime.mjs";
 import {
   STORAGE_LAYOUT_ENVIRONMENT_KEYS,
@@ -66,6 +76,240 @@ describe("mergeRuntimeChildEnv", () => {
     assert.equal(Object.hasOwn(environment, "HOME"), false);
     assert.equal(Object.hasOwn(environment, "USERPROFILE"), false);
     assert.equal(environment.XDG_DATA_HOME, "/tmp/agencyai/data");
+  });
+});
+
+describe("buildLocalMvpOpenCodeChildEnv", () => {
+  it("preserves intentional provider/user values and scrubs ambient control variables", () => {
+    const environment = buildLocalMvpOpenCodeChildEnv({
+      userEnv: {
+        NOTION_TOKEN: "intentional-user-value",
+        CUSTOM_PROVIDER_BASE_URL: "http://127.0.0.1:11434/v1",
+        OLLAMA_HOST: "http://127.0.0.1:11434",
+        NODE_OPTIONS: "--require /tmp/user-injected.cjs",
+        BUN_OPTIONS: "--preload /tmp/user-injected.ts",
+        NODE_PATH: "/tmp/user-node-modules",
+        DYLD_INSERT_LIBRARIES: "/tmp/user-injected.dylib",
+        NPM_CONFIG_REGISTRY: "https://registry.invalid",
+        PATH: "/tmp/user-bin",
+      },
+      parentEnv: {
+        HOME: "/Users/ada",
+        PATH: "/usr/bin:/bin",
+        ANTHROPIC_API_KEY: "provider-key",
+        GITHUB_TOKEN: "ambient-non-provider-token",
+        OPENCODE_MODELS_URL: "https://models.invalid",
+        OPENCODE_ENABLE_EXA: "1",
+        OPENCODE_SERVER_PASSWORD: "ambient-password",
+        OPENWORK_TOKEN: "ambient-openwork-token",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "https://telemetry.invalid",
+        NODE_OPTIONS: "--require /tmp/injected.js",
+      },
+      caEnv: { NODE_EXTRA_CA_CERTS: "/tmp/system-ca.pem" },
+      extra: {
+        OPENWORK_SERVER_URL: "http://127.0.0.1:48000",
+        OPENCODE_SERVER_USERNAME: "generated-user",
+        OPENCODE_SERVER_PASSWORD: "generated-password",
+        OPENCODE_ENABLE_EXA: "1",
+      },
+      storageEnvironment: {
+        OPENCODE_CONFIG_DIR: "/tmp/agencyai/config/opencode",
+        OPENCODE_DB: "/tmp/agencyai/data/opencode.sqlite",
+      },
+      toolchainDir:
+        "/Applications/AgencyAI.app/Contents/Resources/toolchain/aarch64-apple-darwin",
+      trustedPluginPaths: [
+        "/Applications/AgencyAI.app/Contents/Resources/opencode-plugins/agencyai-local-policy.js",
+      ],
+    });
+
+    assert.equal(environment.HOME, "/Users/ada");
+    assert.equal(environment.ANTHROPIC_API_KEY, "provider-key");
+    assert.equal(environment.NOTION_TOKEN, "intentional-user-value");
+    assert.equal(environment.OLLAMA_HOST, "http://127.0.0.1:11434");
+    assert.equal(
+      environment.CUSTOM_PROVIDER_BASE_URL,
+      "http://127.0.0.1:11434/v1",
+    );
+    assert.equal(environment.GITHUB_TOKEN, undefined);
+    assert.equal(environment.NODE_OPTIONS, undefined);
+    assert.equal(environment.BUN_OPTIONS, undefined);
+    assert.equal(environment.NODE_PATH, undefined);
+    assert.equal(environment.DYLD_INSERT_LIBRARIES, undefined);
+    assert.equal(environment.NPM_CONFIG_REGISTRY, undefined);
+    assert.equal(environment.OPENWORK_TOKEN, undefined);
+    assert.equal(
+      environment.OPENWORK_SERVER_URL,
+      "http://127.0.0.1:48000",
+    );
+    assert.equal(environment.OPENCODE_SERVER_USERNAME, "generated-user");
+    assert.equal(environment.OPENCODE_SERVER_PASSWORD, "generated-password");
+    assert.equal(
+      environment.OPENCODE_CONFIG_DIR,
+      "/tmp/agencyai/config/opencode",
+    );
+    assert.equal(environment.OPENCODE_DB, "/tmp/agencyai/data/opencode.sqlite");
+    assert.equal(environment.OPENCODE_MODELS_URL, undefined);
+    assert.equal(environment.OTEL_EXPORTER_OTLP_ENDPOINT, undefined);
+    assert.equal(environment.OPENCODE_DISABLE_RUNTIME_DOWNLOADS, "true");
+    assert.equal(environment.OPENCODE_DISABLE_MODELS_FETCH, "true");
+    assert.equal(environment.OPENCODE_DISABLE_AUTOUPDATE, "true");
+    assert.equal(environment.OPENCODE_DISABLE_SHARE, "true");
+    assert.equal(environment.OPENCODE_DISABLE_LSP_DOWNLOAD, "true");
+    assert.equal(environment.OPENCODE_DISABLE_EXTERNAL_SKILLS, "true");
+    assert.equal(environment.OPENCODE_DISABLE_DEFAULT_PLUGINS, "true");
+    assert.equal(environment.OPENCODE_DISABLE_REMOTE_CONFIG, "true");
+    assert.equal(environment.OPENCODE_DISABLE_REMOTE_INSTRUCTIONS, "true");
+    assert.equal(environment.OPENCODE_DISABLE_REMOTE_SKILLS, "true");
+    assert.equal(
+      environment.OPENCODE_TRUSTED_PLUGIN_PATHS,
+      JSON.stringify([
+        "/Applications/AgencyAI.app/Contents/Resources/opencode-plugins/agencyai-local-policy.js",
+      ]),
+    );
+    assert.equal(environment.OPENCODE_ENABLE_EXA, "false");
+    assert.equal(
+      environment.PATH,
+      "/Applications/AgencyAI.app/Contents/Resources/toolchain/aarch64-apple-darwin:/usr/bin:/bin",
+    );
+  });
+
+  it("resolves only the complete canonical packaged plugin allowlist", async () => {
+    const resourcesPath = await mkdtemp(
+      path.join(os.tmpdir(), "agencyai-trusted-plugins-"),
+    );
+    try {
+      const pluginRoot = path.join(resourcesPath, "opencode-plugins");
+      await mkdir(pluginRoot, { recursive: true });
+      const names = [
+        "agencyai-local-extensions",
+        "agencyai-local-capabilities",
+        "openwork-office-attachments",
+        "openwork-anthropic-adaptive-thinking",
+        "openwork-anthropic-tool-schema",
+        "agencyai-local-policy",
+      ];
+      await Promise.all(
+        names.map((name) =>
+          writeFile(path.join(pluginRoot, `${name}.js`), "export {};\n")),
+      );
+
+      assert.deepEqual(
+        resolveAgencyAiTrustedPluginPaths({ resourcesPath }),
+        await Promise.all(
+          names.map((name) => realpath(path.join(pluginRoot, `${name}.js`))),
+        ),
+      );
+
+      await rm(path.join(pluginRoot, "agencyai-local-policy.js"));
+      assert.throws(
+        () => resolveAgencyAiTrustedPluginPaths({ resourcesPath }),
+        /trusted OpenCode plugins are missing/,
+      );
+    } finally {
+      await rm(resourcesPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("waitForExactOpencodeHealth", () => {
+  it("requires authenticated exact-version readiness", async () => {
+    const requests = [];
+    const payload = await waitForExactOpencodeHealth({
+      baseUrl: "http://127.0.0.1:4096",
+      username: "generated-user",
+      password: "generated-password",
+      expectedVersion: "1.17.11",
+      timeoutMs: 500,
+      async fetchImpl(url, init) {
+        requests.push({ url, init });
+        return new Response(JSON.stringify({
+          healthy: true,
+          version: "1.17.11",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
+    assert.deepEqual(payload, { healthy: true, version: "1.17.11" });
+    assert.equal(requests[0].url, "http://127.0.0.1:4096/global/health");
+    assert.equal(
+      requests[0].init.headers.Authorization,
+      `Basic ${Buffer.from("generated-user:generated-password").toString("base64")}`,
+    );
+    assert.equal(requests[0].init.redirect, "error");
+  });
+
+  it("rejects a healthy response from a different OpenCode version", async () => {
+    await assert.rejects(
+      waitForExactOpencodeHealth({
+        baseUrl: "http://127.0.0.1:4096",
+        username: "generated-user",
+        password: "generated-password",
+        expectedVersion: "1.17.11",
+        timeoutMs: 50,
+        async fetchImpl() {
+          return new Response(JSON.stringify({
+            healthy: true,
+            version: "1.17.12",
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      }),
+      /pinned runtime contract/,
+    );
+  });
+
+  it("rejects redirects without requesting the second-hop health endpoint", async () => {
+    let secondHopRequests = 0;
+    const secondHop = createServer((_request, response) => {
+      secondHopRequests += 1;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ healthy: true, version: "1.17.11" }));
+    });
+    await new Promise((resolve) =>
+      secondHop.listen(0, "127.0.0.1", () => resolve()));
+    const secondAddress = secondHop.address();
+    if (!secondAddress || typeof secondAddress === "string") {
+      throw new Error("Second-hop test server did not bind to a TCP port");
+    }
+
+    const redirector = createServer((_request, response) => {
+      response.writeHead(307, {
+        Location: `http://127.0.0.1:${secondAddress.port}/global/health`,
+      });
+      response.end();
+    });
+    await new Promise((resolve) =>
+      redirector.listen(0, "127.0.0.1", () => resolve()));
+    const redirectAddress = redirector.address();
+    if (!redirectAddress || typeof redirectAddress === "string") {
+      throw new Error("Redirect test server did not bind to a TCP port");
+    }
+
+    try {
+      await assert.rejects(
+        waitForExactOpencodeHealth({
+          baseUrl: `http://127.0.0.1:${redirectAddress.port}`,
+          username: "generated-user",
+          password: "generated-password",
+          expectedVersion: "1.17.11",
+          timeoutMs: 50,
+        }),
+      );
+      assert.equal(secondHopRequests, 0);
+    } finally {
+      await Promise.all([
+        new Promise((resolve, reject) =>
+          redirector.close((error) => error ? reject(error) : resolve())),
+        new Promise((resolve, reject) =>
+          secondHop.close((error) => error ? reject(error) : resolve())),
+      ]);
+    }
   });
 });
 

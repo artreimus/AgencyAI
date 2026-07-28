@@ -34,11 +34,16 @@ describe("env-file", () => {
     expect(isValidEnvKey("")).toBe(false);
   });
 
-  test("isReservedEnvKey blocks OPENWORK_ / OPENCODE_ prefixes", () => {
+  test("isReservedEnvKey blocks application, interpreter, and installer controls", () => {
     expect(isReservedEnvKey("OPENWORK_TOKEN")).toBe(true);
     expect(isReservedEnvKey("OPENCODE_SERVER_PASSWORD")).toBe(true);
+    expect(isReservedEnvKey("NODE_OPTIONS")).toBe(true);
+    expect(isReservedEnvKey("BUN_OPTIONS")).toBe(true);
+    expect(isReservedEnvKey("NPM_CONFIG_REGISTRY")).toBe(true);
+    expect(isReservedEnvKey("PATH")).toBe(true);
     expect(isReservedEnvKey("ANTHROPIC_API_KEY")).toBe(false);
     expect(isReservedEnvKey("GCLOUD_PROJECT")).toBe(false);
+    expect(isReservedEnvKey("OLLAMA_HOST")).toBe(false);
   });
 
   test("upsertMany + list round-trips with sorted keys", async () => {
@@ -97,9 +102,17 @@ describe("env-file", () => {
 
   test("upsertMany rejects reserved keys", async () => {
     const svc = new EnvService({ path });
-    const promise = svc.upsertMany([{ key: "OPENWORK_TOKEN", value: "x" }]);
-    await expect(promise).rejects.toBeInstanceOf(InvalidEnvKeyError);
-    await expect(promise).rejects.toMatchObject({ code: "reserved_env_key" });
+    for (const key of [
+      "OPENWORK_TOKEN",
+      "NODE_OPTIONS",
+      "BUN_OPTIONS",
+      "NPM_CONFIG_REGISTRY",
+      "PATH",
+    ]) {
+      const promise = svc.upsertMany([{ key, value: "x" }]);
+      await expect(promise).rejects.toBeInstanceOf(InvalidEnvKeyError);
+      await expect(promise).rejects.toMatchObject({ code: "reserved_env_key" });
+    }
   });
 
   test("upsertMany accepts managed voice keys but does not inject them", async () => {
@@ -143,7 +156,7 @@ describe("env-file", () => {
     expect(injected).toEqual({ A: "1", B: "2" });
   });
 
-  test("readForInjection strips reserved keys even if present on disk", async () => {
+  test("readForInjection strips reserved and executable-control keys from a tampered store", async () => {
     // Simulate a hand-edited env.json that contains a reserved key. The
     // service refuses to write these, but the injection path must still
     // defend against a file someone tampered with.
@@ -154,12 +167,20 @@ describe("env-file", () => {
         updatedAt: Date.now(),
         variables: [
           { key: "OPENWORK_TOKEN", value: "stolen" },
+          { key: "NODE_OPTIONS", value: "--require /tmp/injected.cjs" },
+          { key: "BUN_OPTIONS", value: "--preload /tmp/injected.ts" },
+          { key: "DYLD_INSERT_LIBRARIES", value: "/tmp/injected.dylib" },
+          { key: "NPM_CONFIG_REGISTRY", value: "https://registry.invalid" },
           { key: "ANTHROPIC_API_KEY", value: "sk-ant" },
+          { key: "OLLAMA_HOST", value: "http://127.0.0.1:11434" },
         ],
       }),
     );
     const injected = await EnvService.readForInjection(path);
-    expect(injected).toEqual({ ANTHROPIC_API_KEY: "sk-ant" });
+    expect(injected).toEqual({
+      ANTHROPIC_API_KEY: "sk-ant",
+      OLLAMA_HOST: "http://127.0.0.1:11434",
+    });
   });
 
   test("readForInjection returns {} when the file is missing", async () => {
