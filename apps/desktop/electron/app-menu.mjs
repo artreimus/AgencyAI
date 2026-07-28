@@ -3,7 +3,9 @@
 // and Windows/Linux menu-bar visibility. Extracted from main.mjs as a
 // factory (createRuntimeManager pattern); the NATIVE_MENU_* channels are
 // consumed by the preload bridge.
-import { BrowserWindow, Menu, shell } from "electron";
+import { BrowserWindow, Menu } from "electron";
+
+import { openExternalUrl } from "./open-external.mjs";
 
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
@@ -14,7 +16,9 @@ export function createApplicationMenu({
   appName,
   docsUrl = null,
   updatesEnabled = true,
+  developmentToolsEnabled = false,
   getWindow,
+  openExternal = openExternalUrl,
 }) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
@@ -68,7 +72,7 @@ export function createApplicationMenu({
             {
               label: "Docs",
               click: async () => {
-                await shell.openExternal(docsUrl);
+                await openExternal(docsUrl);
               },
             },
           ]
@@ -176,10 +180,14 @@ export function createApplicationMenu({
               void toggleSidebarFromNativeMenu();
             },
           },
-          { type: "separator" },
-          { role: "reload" },
-          { role: "forceReload" },
-          { role: "toggleDevTools" },
+          ...(developmentToolsEnabled
+            ? [
+                { type: "separator" },
+                { role: "reload" },
+                { role: "forceReload" },
+                { role: "toggleDevTools" },
+              ]
+            : []),
           { type: "separator" },
           {
             label: "Actual Size",

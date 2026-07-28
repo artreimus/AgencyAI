@@ -17,9 +17,16 @@ const COMPUTER_USE_HELPER_APP_NAME = productProfile.brand.computerUse.bundleName
 const COMPUTER_USE_HELPER_DISPLAY_NAME = productProfile.brand.computerUse.displayName;
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
+function developmentHelperOverride(name) {
+  if (app.isPackaged || process.env.OPENWORK_DEV_MODE !== "1") return null;
+  return process.env[name]?.trim() || null;
+}
+
 function computerUseHelperExecutablePath() {
   const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicitBinary = developmentHelperOverride(
+    "OPENWORK_COMPUTER_USE_BINARY",
+  );
   const candidates = [
     explicitBinary,
     appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
@@ -29,7 +36,7 @@ function computerUseHelperExecutablePath() {
 }
 
 function computerUseHelperAppPath() {
-  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const explicitApp = developmentHelperOverride("OPENWORK_COMPUTER_USE_APP");
   const candidates = [
     explicitApp,
     process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
@@ -43,7 +50,7 @@ function getComputerUseMcpCommand() {
   const helperExecutable = computerUseHelperExecutablePath();
   if (helperExecutable) return [helperExecutable, "mcp"];
 
-  if (app.isPackaged) {
+  if (app.isPackaged || productProfile.profile === "local-mvp") {
     throw new Error(
       `${COMPUTER_USE_HELPER_DISPLAY_NAME} is missing from this ${productProfile.brand.name} build.`,
     );
@@ -61,8 +68,10 @@ function getComputerUseMcpCommand() {
 // ---------------------------------------------------------------------------
 
 function resolveComputerUseExecutable() {
-  // 1. Explicit env override.
-  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  // 1. Explicit overrides are development-only.
+  const explicit = developmentHelperOverride(
+    "OPENWORK_COMPUTER_USE_BINARY",
+  );
   if (explicit && existsSync(explicit)) return explicit;
 
   // 2. .app bundle (packaged builds + pnpm dev).

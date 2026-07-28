@@ -41,20 +41,10 @@ async function createDb(): Promise<{ path: string; dispose: () => void }> {
   };
 }
 
-// seedOpencodeSessionMessages requires better-sqlite3, whose native binding
-// does not load under bun (oven-sh/bun#4290). Skip gracefully instead of
-// failing the suite in bun-driven environments like CI.
-const betterSqliteAvailable = await import("better-sqlite3").then(
-  (mod) => {
-    try {
-      new mod.default(":memory:").close();
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  () => false,
-);
+// better-sqlite3 13 supports Electron 43's V8 ABI but Bun 1.3 fatally exits
+// while importing it, before a rejected import can be caught. The production
+// implementation loads the addon only inside Node/Electron seed operations.
+const betterSqliteAvailable = typeof process.versions.bun !== "string";
 
 describe.skipIf(!betterSqliteAvailable)("seedOpencodeSessionMessages", () => {
   test("writes seeded transcript messages into the OpenCode db", async () => {
@@ -118,6 +108,19 @@ describe.skipIf(!betterSqliteAvailable)("seedOpencodeSessionMessages", () => {
     expect(first.skipped).toBe(false);
     expect(second).toEqual({ inserted: 0, skipped: true });
   });
+});
+
+test("Bun path resolution does not load the Node/Electron native addon", () => {
+  expect(resolveOpencodeDbPath()).toBeString();
+  if (typeof process.versions.bun === "string") {
+    expect(() =>
+      seedOpencodeSessionMessages({
+        sessionId: "ses_bun_guard",
+        workspaceRoot: "/tmp/workspace",
+        messages: [{ role: "assistant", text: "guard" }],
+      })
+    ).toThrow(/Node\/Electron runtime/);
+  }
 });
 
 describe("resolveOpencodeDbPath", () => {

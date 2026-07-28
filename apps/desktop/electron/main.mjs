@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { createServer } from "node:http";
-import net from "node:net";
 import { existsSync } from "node:fs";
 import {
   cp,
@@ -55,6 +55,11 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { authorizeLocalFileTarget } from "./local-file-access.mjs";
+import {
+  installInternalRendererProtocol,
+  registerInternalRendererScheme,
+} from "./internal-renderer-protocol.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { createAppBuildInfo } from "./app-build-info.mjs";
 import { resolveProductArchitectureInfo } from "./architecture-policy.mjs";
@@ -79,6 +84,10 @@ import {
   writeWindowsBrandShortcut,
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
+
+process.on("uncaughtExceptionMonitor", (error, origin) => {
+  console.error(`[agencyai:fatal] Uncaught main-process exception (${origin})`, error);
+});
 
 /* DESKTOP_APPROVAL_POLICY_HELPERS_START */
 const SUPPORTED_DESKTOP_APPROVAL_OPERATIONS = Object.freeze([
@@ -637,9 +646,8 @@ export function prepareDesktopFetchRequest({
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
-// Electron 35 eagerly resolves every export in a named ESM import, including
-// safeStorage. Loading through CommonJS keeps safeStorage lazy so isolated demo
-// profiles do not show macOS's native keychain dialog before our switches run.
+// Keep Electron's safeStorage export lazy so isolated demo profiles do not show
+// macOS's native keychain dialog before our command-line policy is installed.
 const {
   app,
   BrowserWindow,
@@ -649,12 +657,18 @@ const {
   nativeTheme,
   net: electronNet,
   Notification: ElectronNotification,
+  protocol,
   session,
   shell,
   systemPreferences,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const PRODUCT_PROFILE = getBuildProductProfile();
+const INTERNAL_RENDERER_SCHEME = PRODUCT_PROFILE.brand.rendererScheme;
+const REGISTERED_INTERNAL_RENDERER_ORIGIN = registerInternalRendererScheme(
+  protocol,
+  INTERNAL_RENDERER_SCHEME,
+);
 const OPENCODE_DISTRIBUTION_RECORD = PRODUCT_PROFILE.profile === "local-mvp"
   ? loadOpencodeDistributionSync({
       desktopRoot: path.resolve(__dirname, ".."),
@@ -675,6 +689,12 @@ const TRUSTED_RENDERER_ORIGIN = resolveDesktopApprovalTrustedRendererOrigin({
   isPackaged: app.isPackaged,
   env: process.env,
 });
+if (
+  app.isPackaged &&
+  TRUSTED_RENDERER_ORIGIN !== REGISTERED_INTERNAL_RENDERER_ORIGIN
+) {
+  throw new Error("Packaged renderer origin does not match the registered internal scheme");
+}
 applyDesktopProductEnvironmentPolicy({
   productProfile: PRODUCT_PROFILE,
   isPackaged: app.isPackaged,
@@ -702,12 +722,15 @@ const APP_NAME = DESKTOP_PRODUCT_POLICY.appName;
 const DESKTOP_PROTOCOL_SCHEME = DESKTOP_PRODUCT_POLICY.protocol;
 const PUBLIC_DEEP_LINKS_ENABLED = DESKTOP_PRODUCT_POLICY.publicDeepLinksEnabled;
 let currentDisplayAppName = APP_NAME;
-if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
+if (
+  !app.isPackaged &&
+  process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1"
+) {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
   // cookie. That modal blocks the entire Electron main loop and makes the demo
-  // appear frozen. Production never sets this flag and continues to use the
-  // system keychain normally.
+  // appear frozen. Packaged builds ignore this development environment hook
+  // and continue to use the system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
 const RELEASE_DOWNLOADS_ENABLED = Boolean(
@@ -729,6 +752,7 @@ const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   updatesEnabled: PRODUCT_PROFILE.features.automaticUpdates,
+  developmentToolsEnabled: isDevMode && !app.isPackaged,
   getWindow: () => createMainWindow(),
 });
 
@@ -736,6 +760,7 @@ const uiControlServer = createUiControlServer({
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+  getBrowserAutomationPolicy: () => browserPanel.browserAutomationPolicy(),
 });
 
 const terminalProcesses = new Map();
@@ -1445,34 +1470,20 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
   app.dock.setIcon(INITIAL_APP_ICON_IMAGE);
 }
 
-// Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
-// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
-// pin a specific port; otherwise probe for a free one starting at 9223.
-// Must resolve before app.commandLine.appendSwitch (before `ready`).
-function probePort(port) {
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once("error", () => resolve(false));
-    srv.listen({ port, host: "127.0.0.1" }, () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findFreeCdpPort(candidates) {
-  for (const port of candidates) {
-    if (await probePort(port)) return port;
-  }
-  return 0;
-}
-
+// Expose Chrome DevTools Protocol only for the profile-enabled built-in browser.
+// Packaged launches choose an unpredictable high loopback port on every start;
+// an explicit port is accepted only by unpackaged test/development profiles.
 const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
-const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
-  ? explicitCdpPort
-  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+const remoteDebugPort = PRODUCT_PROFILE.features.browserAutomation
+  ? !app.isPackaged &&
+      Number.isFinite(explicitCdpPort) &&
+      explicitCdpPort > 0
+    ? explicitCdpPort
+    : randomInt(49_152, 65_536)
+  : 0;
 if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
@@ -1487,7 +1498,10 @@ if (isDevMode && !app.isPackaged) {
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
-const extraLaunchArgs = (process.env.ELECTRON_EXTRA_LAUNCH_ARGS ?? "").trim();
+const extraLaunchArgs =
+  PRODUCT_PROFILE.profile === "local-mvp" && app.isPackaged
+    ? ""
+    : (process.env.ELECTRON_EXTRA_LAUNCH_ARGS ?? "").trim();
 if (extraLaunchArgs) {
   for (const arg of extraLaunchArgs.split(/\s+/)) {
     const cleaned = arg.replace(/^--/, "");
@@ -1500,7 +1514,10 @@ if (extraLaunchArgs) {
     }
   }
 }
-configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
+configureFakeMediaForTests(
+  app,
+  !app.isPackaged && envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"),
+);
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
@@ -1559,11 +1576,50 @@ const IDLE_ROUTER_INFO = Object.freeze({
 });
 
 let mainWindow = null;
+let internalRendererProtocolInstalled = false;
 const pendingDeepLinks = [];
+
+function authorizeMainIpcSender(event) {
+  return assertDesktopApprovalIpcSender({
+    event,
+    mainWindow,
+    trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+  });
+}
+
+async function authorizedLocalFileRoots() {
+  return [
+    storageLayout.root,
+    ...await workspaceStore.listLocalWorkspacePaths(),
+  ];
+}
+
+async function authorizeDesktopLocalFile(value, options = {}) {
+  return authorizeLocalFileTarget(value, {
+    allowedRoots: await authorizedLocalFileRoots(),
+    allowMissing: options.allowMissing === true,
+  });
+}
+
+function ensureInternalRendererProtocol() {
+  if (internalRendererProtocolInstalled) return;
+  const rendererRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "app-dist")
+    : path.resolve(__dirname, "../../app/dist");
+  installInternalRendererProtocol({
+    protocolModule: protocol,
+    rendererRoot,
+    netFetch: (url, options) => electronNet.fetch(url, options),
+    scheme: INTERNAL_RENDERER_SCHEME,
+  });
+  internalRendererProtocolInstalled = true;
+}
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
+  trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+  openExternal: openExternalUrl,
   onDeepLink: PUBLIC_DEEP_LINKS_ENABLED
     ? (urls) => queueDeepLinks(urls)
     : null,
@@ -2642,13 +2698,13 @@ const desktopCommandHandlers = {
       return undefined;
   },
   "__openPath": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
-      if (!target) return "Path is required.";
+      const target = await authorizeDesktopLocalFile(args[0]);
       return shell.openPath(target);
   },
   "__revealItemInDir": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
-      if (!target) return "Path is required.";
+      const target = await authorizeDesktopLocalFile(args[0], {
+        allowMissing: true,
+      });
       if (existsSync(target)) {
         shell.showItemInFolder(target);
         return undefined;
@@ -2663,8 +2719,7 @@ const desktopCommandHandlers = {
       return `Could not find "${target}" on disk.`;
   },
   "__getFileIcon": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
-      if (!target) return null;
+      const target = await authorizeDesktopLocalFile(args[0]);
       const requestedSize = args[1];
       /** @type {"small" | "normal" | "large"} */
       let validSize = "normal";
@@ -2772,9 +2827,9 @@ const desktopCommandHandlers = {
       return results;
   },
   "__openWithApp": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
+      const target = await authorizeDesktopLocalFile(args[0]);
       const appPath = String(args[1] ?? "").trim();
-      if (!target || !appPath) return "Target and app path are required.";
+      if (!appPath) return "Target and app path are required.";
       const platform = process.platform;
       try {
         if (platform === "darwin") {
@@ -2923,6 +2978,7 @@ function desktopErrorMessageWithCauses(error) {
 }
 
 async function handleDesktopInvoke(event, command, ...args) {
+  authorizeMainIpcSender(event);
   const handler = desktopCommandHandlers[command];
   if (!handler) {
     throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
@@ -2937,8 +2993,9 @@ async function handleDesktopInvoke(event, command, ...args) {
 
 async function createMainWindow() {
   if (mainWindow) return mainWindow;
+  ensureInternalRendererProtocol();
 
-  const preloadPath = path.join(__dirname, "preload.mjs");
+  const preloadPath = path.join(__dirname, "preload.cjs");
   const windowAppearanceOptions = {};
   if (process.platform === "darwin") {
     Object.assign(windowAppearanceOptions, {
@@ -2982,7 +3039,8 @@ async function createMainWindow() {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      devTools: !app.isPackaged,
       // Enable Chromium's built-in PDF viewer so PDFs render inside the
       // artifact panel (<embed> pointed at a blob URL).
       plugins: true,
@@ -3021,24 +3079,8 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("file://")) {
-      try {
-        void shell.openPath(fileURLToPath(url));
-      } catch {
-        void openExternalUrl(url);
-      }
-
-      return { action: "deny" };
-    }
-
-    const local =
-      url.startsWith("http://127.0.0.1") ||
-      url.startsWith("http://localhost");
-    if (!local) {
-      void openExternalUrl(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
+    void openExternalUrl(url);
+    return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -3067,38 +3109,57 @@ async function createMainWindow() {
     browserPanel.routeBlockedMainWindowNavigation(url);
   });
 
-  const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+  const startUrl = app.isPackaged
+    ? ""
+    : process.env.OPENWORK_ELECTRON_START_URL?.trim() ||
+      process.env.ELECTRON_START_URL?.trim();
   if (startUrl) {
     await mainWindow.loadURL(startUrl);
   } else {
-    const packagedIndexPath = path.join(process.resourcesPath, "app-dist", "index.html");
-    const devIndexPath = path.resolve(__dirname, "../../app/dist/index.html");
-    await mainWindow.loadFile(app.isPackaged ? packagedIndexPath : devIndexPath);
+    await mainWindow.loadURL(`${REGISTERED_INTERNAL_RENDERER_ORIGIN}/`);
   }
 
   return mainWindow;
 }
 
+function registerTrustedMainHandle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    authorizeMainIpcSender(event);
+    return handler(event, ...args);
+  });
+}
+
 ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+  authorizeMainIpcSender(event);
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
-ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
+registerTrustedMainHandle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
     return { ok: false, error: "empty url" };
   }
   return openExternalUrl(url.trim());
 });
-ipcMain.handle("openwork:shell:relaunch", async () => {
+registerTrustedMainHandle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.quit();
 });
-ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
-ipcMain.handle("openwork:system:microphoneStatus", async () => {
+registerTrustedMainHandle("openwork:system:architecture", async () => resolveArchitectureInfo());
+registerTrustedMainHandle("openwork:system:microphoneStatus", async () => {
+  if (!PRODUCT_PROFILE.features.voice) {
+    return { platform: process.platform, status: "feature-disabled" };
+  }
   if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
   return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
 });
-ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
+registerTrustedMainHandle("openwork:system:askMicrophoneAccess", async () => {
+  if (!PRODUCT_PROFILE.features.voice) {
+    return {
+      platform: process.platform,
+      granted: false,
+      status: "feature-disabled",
+    };
+  }
   if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
   const before = systemPreferences.getMediaAccessStatus("microphone");
   const granted = await systemPreferences.askForMediaAccess("microphone");
@@ -3107,7 +3168,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 });
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
-ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+registerTrustedMainHandle("openwork:terminal:create", async (event, options = {}) => {
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
   const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
@@ -3140,35 +3201,44 @@ ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
 
   return { terminalId };
 });
-ipcMain.handle("openwork:terminal:write", (event, terminalId, data) => {
+registerTrustedMainHandle("openwork:terminal:write", (event, terminalId, data) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || typeof data !== "string") return;
   terminal.process.write(data);
 });
-ipcMain.handle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
+registerTrustedMainHandle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
   terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
 });
-ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
+registerTrustedMainHandle("openwork:terminal:kill", (event, terminalId) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal) return;
   killTerminal(String(terminalId));
 });
 
-browserPanel.registerIpc(ipcMain);
+browserPanel.registerIpc(ipcMain, {
+  authorizeMainSender: authorizeMainIpcSender,
+});
 
-registerMigrationIpc({
-  app,
-  ipcMain,
-  enabled: PRODUCT_PROFILE.features.legacyOpenWorkImport,
-});
-const { ensureAutoUpdater } = registerUpdaterIpc({
-  app,
-  ipcMain,
-  getMainWindow: () => mainWindow,
-  enabled: PRODUCT_PROFILE.features.automaticUpdates,
-});
+if (PRODUCT_PROFILE.features.legacyOpenWorkImport) {
+  registerMigrationIpc({
+    app,
+    ipcMain,
+    enabled: true,
+    authorizeSender: authorizeMainIpcSender,
+  });
+}
+let ensureAutoUpdater = async () => null;
+if (PRODUCT_PROFILE.features.automaticUpdates) {
+  ({ ensureAutoUpdater } = registerUpdaterIpc({
+    app,
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    enabled: true,
+    authorizeSender: authorizeMainIpcSender,
+  }));
+}
 
 if (!app.requestSingleInstanceLock()) {
   if (isDevMode && !app.isPackaged) {
@@ -3217,7 +3287,11 @@ or use: pnpm dev:worktree`);
   }
 
   app.whenReady().then(async () => {
-    installMediaPermissionHandlers(session, () => mainWindow);
+    ensureInternalRendererProtocol();
+    installMediaPermissionHandlers(session, () => mainWindow, {
+      trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+      allowMicrophone: PRODUCT_PROFILE.features.voice,
+    });
     if (PRODUCT_PROFILE.features.freshStart) {
       await runPendingNukeCleanup({
         env: process.env,
@@ -3288,6 +3362,9 @@ or use: pnpm dev:worktree`);
     if (PRODUCT_PROFILE.features.automaticUpdates) {
       void ensureAutoUpdater();
     }
+  }).catch((error) => {
+    console.error("[agencyai:fatal] Desktop startup failed", error);
+    app.exit(1);
   });
 
   app.on("activate", async () => {

@@ -1,3 +1,4 @@
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -53,6 +54,52 @@ function resolveResourcesDir(context) {
   const appPath = resolveMacAppPath(context);
   if (appPath) return path.join(appPath, "Contents", "Resources");
   return path.join(context.appOutDir, "resources");
+}
+
+function enforceMacTransportSecurity(context) {
+  if (context.electronPlatformName !== "darwin") return null;
+  const appPath = resolveMacAppPath(context);
+  if (!appPath) {
+    throw new Error("Cannot locate packaged macOS app for transport-policy hardening");
+  }
+  const infoPlistPath = path.join(appPath, "Contents", "Info.plist");
+  if (
+    !fs.existsSync(infoPlistPath)
+    || !fs.lstatSync(infoPlistPath).isFile()
+    || fs.lstatSync(infoPlistPath).isSymbolicLink()
+  ) {
+    throw new Error(`Unsafe or missing packaged Info.plist: ${infoPlistPath}`);
+  }
+
+  // electron-builder 26 forces this value to true for updater proxy support
+  // after merging mac.extendInfo. AgencyAI's local MVP has no updater and must
+  // retain only its explicit loopback HTTP exceptions.
+  execFileSync("/usr/bin/plutil", [
+    "-replace",
+    "NSAppTransportSecurity.NSAllowsArbitraryLoads",
+    "-bool",
+    "NO",
+    infoPlistPath,
+  ]);
+  const transportSecurity = JSON.parse(execFileSync("/usr/bin/plutil", [
+    "-extract",
+    "NSAppTransportSecurity",
+    "json",
+    "-o",
+    "-",
+    infoPlistPath,
+  ], { encoding: "utf8" }));
+  if (
+    transportSecurity.NSAllowsArbitraryLoads !== false
+    || transportSecurity.NSAllowsLocalNetworking !== true
+    || transportSecurity.NSExceptionDomains?.["127.0.0.1"]
+      ?.NSTemporaryExceptionAllowsInsecureHTTPLoads !== true
+    || transportSecurity.NSExceptionDomains?.localhost
+      ?.NSTemporaryExceptionAllowsInsecureHTTPLoads !== true
+  ) {
+    throw new Error("Packaged macOS transport policy is not loopback-only");
+  }
+  return transportSecurity;
 }
 
 async function writePackagedRuntimeIntegrity(context, triple) {
@@ -130,6 +177,7 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
 async function afterPack(context) {
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
+  enforceMacTransportSecurity(context);
 
   const sidecarsDir = resolveSidecarsDir(context);
   if (!sidecarsDir || !fs.existsSync(sidecarsDir)) return;
@@ -170,6 +218,7 @@ async function afterPack(context) {
 
 module.exports = afterPack;
 module.exports.default = afterPack;
+module.exports.enforceMacTransportSecurity = enforceMacTransportSecurity;
 module.exports.normalizeArch = normalizeArch;
 module.exports.resolveResourcesDir = resolveResourcesDir;
 module.exports.sidecarBases = sidecarBases;

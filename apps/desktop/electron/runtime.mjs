@@ -825,6 +825,32 @@ function prependExactPath(directory, currentPath) {
   return [...new Set(entries)].join(path.delimiter);
 }
 
+function controlledUiControlDiscoveryPath(value, storageEnvironment) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate) return null;
+  const storageRoot =
+    typeof storageEnvironment?.OPENWORK_STORAGE_ROOT === "string"
+      ? storageEnvironment.OPENWORK_STORAGE_ROOT.trim()
+      : "";
+  if (!storageRoot || !path.isAbsolute(storageRoot) || !path.isAbsolute(candidate)) {
+    throw new Error("AgencyAI UI control discovery path must be absolute");
+  }
+  const canonicalRoot = path.resolve(storageRoot);
+  const resolvedCandidate = path.resolve(candidate);
+  const relativePath = path.relative(canonicalRoot, resolvedCandidate);
+  if (
+    relativePath === ".."
+    || relativePath.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relativePath)
+    || path.basename(resolvedCandidate) !== "openwork-ui-control.json"
+  ) {
+    throw new Error(
+      "AgencyAI UI control discovery path must be the app-owned discovery file",
+    );
+  }
+  return resolvedCandidate;
+}
+
 /**
  * Build the exact environment passed to local-mvp OpenCode processes.
  *
@@ -841,6 +867,7 @@ export function buildLocalMvpOpenCodeChildEnv({
   storageEnvironment = {},
   toolchainDir = "",
   trustedPluginPaths = [],
+  uiControlDiscoveryPath = null,
 } = {}) {
   const selectedUser = selectLocalMvpUserEnvironment(userEnv);
   const selectedParent = selectLocalMvpParentEnvironment(parentEnv);
@@ -876,6 +903,14 @@ export function buildLocalMvpOpenCodeChildEnv({
   }
   for (const [name, value] of Object.entries(storageEnvironment)) {
     if (typeof value === "string") environment[name] = value;
+  }
+  delete environment.OPENWORK_UI_CONTROL_DISCOVERY;
+  const controlledUiDiscovery = controlledUiControlDiscoveryPath(
+    uiControlDiscoveryPath,
+    storageEnvironment,
+  );
+  if (controlledUiDiscovery) {
+    environment.OPENWORK_UI_CONTROL_DISCOVERY = controlledUiDiscovery;
   }
   Object.assign(environment, LOCAL_MVP_FORCED_OPENCODE_ENV);
   environment.OPENCODE_TRUSTED_PLUGIN_PATHS =
@@ -1003,6 +1038,13 @@ export function createRuntimeManager({
   if (storageLayout && path.resolve(userDataDir) !== path.resolve(storageLayout.userData)) {
     throw new Error("Electron userData must match the resolved StorageLayout");
   }
+  const runtimeStorageEnvironment =
+    /** @type {Record<string, string | undefined>} */ (storageEnvironment);
+  const uiControlDiscoveryPath =
+    typeof runtimeStorageEnvironment.OPENWORK_STORAGE_ROOT === "string"
+    && runtimeStorageEnvironment.OPENWORK_STORAGE_ROOT.trim()
+      ? path.join(userDataDir, "openwork-ui-control.json")
+      : null;
   // This is populated only after the embedded server validates the exact
   // contract. runtimeStatus must report consumption, not merely launch input.
   let serverStorageAttestation = null;
@@ -1235,6 +1277,7 @@ export function createRuntimeManager({
         storageEnvironment,
         toolchainDir: path.dirname(verifiedRipgrep.path),
         trustedPluginPaths,
+        uiControlDiscoveryPath,
       });
     }
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit

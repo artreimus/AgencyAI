@@ -108,11 +108,13 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
       caEnv: { NODE_EXTRA_CA_CERTS: "/tmp/system-ca.pem" },
       extra: {
         OPENWORK_SERVER_URL: "http://127.0.0.1:48000",
+        OPENWORK_UI_CONTROL_DISCOVERY: "/tmp/attacker-ui-control.json",
         OPENCODE_SERVER_USERNAME: "generated-user",
         OPENCODE_SERVER_PASSWORD: "generated-password",
         OPENCODE_ENABLE_EXA: "1",
       },
       storageEnvironment: {
+        OPENWORK_STORAGE_ROOT: "/tmp/agencyai",
         OPENCODE_CONFIG_DIR: "/tmp/agencyai/config/opencode",
         OPENCODE_DB: "/tmp/agencyai/data/opencode.sqlite",
       },
@@ -121,6 +123,8 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
       trustedPluginPaths: [
         "/Applications/AgencyAI.app/Contents/Resources/opencode-plugins/agencyai-local-policy.js",
       ],
+      uiControlDiscoveryPath:
+        "/tmp/agencyai/electron/user-data/openwork-ui-control.json",
     });
 
     assert.equal(environment.HOME, "/Users/ada");
@@ -138,6 +142,10 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
     assert.equal(environment.DYLD_INSERT_LIBRARIES, undefined);
     assert.equal(environment.NPM_CONFIG_REGISTRY, undefined);
     assert.equal(environment.OPENWORK_TOKEN, undefined);
+    assert.equal(
+      environment.OPENWORK_UI_CONTROL_DISCOVERY,
+      "/tmp/agencyai/electron/user-data/openwork-ui-control.json",
+    );
     assert.equal(
       environment.OPENWORK_SERVER_URL,
       "http://127.0.0.1:48000",
@@ -174,6 +182,18 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
     );
   });
 
+  it("rejects a UI-control discovery file outside AgencyAI storage", () => {
+    assert.throws(
+      () => buildLocalMvpOpenCodeChildEnv({
+        storageEnvironment: {
+          OPENWORK_STORAGE_ROOT: "/tmp/agencyai",
+        },
+        uiControlDiscoveryPath: "/tmp/attacker/openwork-ui-control.json",
+      }),
+      /app-owned discovery file/,
+    );
+  });
+
   it("resolves only the complete canonical packaged plugin allowlist", async () => {
     const resourcesPath = await mkdtemp(
       path.join(os.tmpdir(), "agencyai-trusted-plugins-"),
@@ -187,6 +207,7 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
         "openwork-office-attachments",
         "openwork-anthropic-adaptive-thinking",
         "openwork-anthropic-tool-schema",
+        "agencyai-browser-automation",
         "agencyai-local-policy",
       ];
       await Promise.all(

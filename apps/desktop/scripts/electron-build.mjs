@@ -43,9 +43,8 @@ run(
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
-// OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so
-// index.html resolves /assets/* correctly when loaded via file:// from
-// inside the packaged .app bundle.
+// OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so the
+// packaged app-dist tree resolves beneath agencyai-internal://renderer/.
 run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
   OPENWORK_ELECTRON_BUILD: "1",
 });
@@ -92,7 +91,7 @@ process.stdout.write(
       ok: true,
       renderer: "apps/app/dist",
       electronMain: "apps/desktop/electron/main.mjs",
-      electronPreload: "apps/desktop/electron/preload.mjs",
+      electronPreload: "apps/desktop/electron/preload.cjs",
     },
     null,
     2,

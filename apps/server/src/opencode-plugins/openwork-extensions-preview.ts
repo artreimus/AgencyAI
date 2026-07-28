@@ -158,7 +158,7 @@ const AGENCYAI_BROWSER_INSTRUCTION =
   `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the AgencyAI app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
-For web browsing tasks, start with openwork_execute id browser.open_url. It creates or selects a built-in AgencyAI browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot calls.
+For web browsing tasks, start with openwork_execute id browser.open_url. It creates an isolated built-in AgencyAI browser tab and returns its authorized target_id. Use that target_id for later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot calls; AgencyAI supplies the private browser endpoint itself.
 Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the AgencyAI app target.`;
 
 const AGENCYAI_LOCAL_EXTENSION_DISCOVERY_INSTRUCTION =

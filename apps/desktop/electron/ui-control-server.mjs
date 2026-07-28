@@ -5,12 +5,17 @@
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { rm, writeFile } from "node:fs/promises";
+import { chmod, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { app } from "electron";
 
-export function createUiControlServer({ appName, appIdentifier, getWindow }) {
+export function createUiControlServer({
+  appName,
+  appIdentifier,
+  getWindow,
+  getBrowserAutomationPolicy,
+}) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -142,6 +147,22 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
           sendJsonResponse(response, 200, await runOpenworkControlCommand("context"));
           return;
         }
+        if (request.method === "GET" && url.pathname === "/browser/targets") {
+          const policy = typeof getBrowserAutomationPolicy === "function"
+            ? getBrowserAutomationPolicy()
+            : null;
+          sendJsonResponse(response, 200, {
+            ok: true,
+            browser_url:
+              typeof policy?.browser_url === "string"
+                ? policy.browser_url
+                : null,
+            target_ids: Array.isArray(policy?.target_ids)
+              ? policy.target_ids.filter((value) => typeof value === "string")
+              : [],
+          });
+          return;
+        }
         if (request.method === "POST" && url.pathname === "/query") {
           sendJsonResponse(response, 200, await runOpenworkControlCommand("query", await readJsonRequestBody(request)));
           return;
@@ -167,11 +188,16 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     const port = typeof address === "object" && address ? address.port : null;
     if (!port) throw new Error("Could not start OpenWork UI control bridge.");
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
+    const temporaryDiscoveryPath =
+      `${uiControlDiscoveryPath}.${process.pid}.tmp`;
     await writeFile(
-      uiControlDiscoveryPath,
+      temporaryDiscoveryPath,
       `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
+    await chmod(temporaryDiscoveryPath, 0o600);
+    await rename(temporaryDiscoveryPath, uiControlDiscoveryPath);
+    await chmod(uiControlDiscoveryPath, 0o600);
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).
     process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
   }

@@ -241,7 +241,7 @@ describe("desktop approval IPC sender policy", () => {
     );
   });
 
-  it("keeps the packaged file renderer fail-closed until PR05 registers the internal scheme", () => {
+  it("keeps the legacy packaged file renderer fail-closed", () => {
     const packagedFileRenderer = rendererHarness(
       "file:///Applications/AgencyAI.app/Contents/Resources/app-dist/index.html",
     );

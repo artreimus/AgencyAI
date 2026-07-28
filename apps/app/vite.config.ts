@@ -106,9 +106,9 @@ const migrationReleaseEnv = productProfile.features.legacyOpenWorkImport
   ? loadMigrationReleaseEnv()
   : {};
 
-// Electron packaged builds load index.html via `file://`, so asset URLs
-// must be relative. Tauri serves via its own protocol so absolute paths
-// work there. Gate on an env var the electron build script sets.
+// Electron packaged builds serve app-dist from the internal renderer scheme,
+// so asset URLs must stay relative to agencyai-internal://renderer/. Tauri
+// serves via its own protocol where absolute paths continue to work.
 const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 
 export default defineConfig({
