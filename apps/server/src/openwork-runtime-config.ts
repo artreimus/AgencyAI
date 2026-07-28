@@ -16,7 +16,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  openworkPluginPath,
+  agencyAiLocalPluginUrls,
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
@@ -27,6 +27,8 @@ import { withoutOpenworkCloudMcp } from "./mcp-product-policy.js";
 import { isLocalMvpProduct } from "./product-policy.js";
 import {
   withLocalMvpRequiredDisabledProviders,
+  withoutRemoteInstructionUrls,
+  withoutRemoteSkillUrls,
   withoutLocalMvpBlockedProviders,
 } from "./opencode-runtime-product-policy.js";
 import type { ServerConfig } from "./types.js";
@@ -123,17 +125,7 @@ AgencyAI can work with standard artifacts in the current workspace.
 - For websites or UI previews, start a local development server when useful and mention its loopback URL.`;
 
 function localRuntimePluginList(): string[] {
-  return [
-    "opencode-chrome-devtools",
-    openworkPluginPath("agencyai-local-extensions"),
-    openworkPluginPath("agencyai-local-capabilities"),
-    openworkOfficeAttachmentsPluginPath(),
-    openworkAnthropicAdaptiveThinkingPluginPath(),
-    openworkAnthropicToolSchemaPluginPath(),
-    // The policy hook must run last so a preceding user plugin cannot
-    // reintroduce an MCP that the local product profile excludes.
-    openworkPluginPath("agencyai-local-policy"),
-  ];
+  return agencyAiLocalPluginUrls();
 }
 
 export async function buildOpenworkRuntimeConfigObject(
@@ -172,6 +164,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
               : {}),
             openTelemetry: false,
           },
+          instructions: withoutRemoteInstructionUrls(
+            runtimeConfig.instructions,
+          ),
+          skills: withoutRemoteSkillUrls(runtimeConfig.skills),
           provider: withoutLocalMvpBlockedProviders(runtimeConfig.provider),
         }
       : {}),

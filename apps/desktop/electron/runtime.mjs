@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -9,6 +16,18 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
+import {
+  AGENCYAI_LOCAL_OPENCODE_PLUGIN_NAMES,
+  isUserEnvironmentInjectionKeyAllowed,
+} from "@openwork/product-config";
+import {
+  currentTargetTriple,
+  distributionTarget,
+  opencodeReadinessProvenance,
+  resolveVerifiedBundledOpencodeSync,
+  resolveVerifiedRipgrepSync,
+  validateOpencodeDistribution,
+} from "./opencode-distribution.mjs";
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
@@ -441,6 +460,54 @@ async function waitForHttpOk(url, timeoutMs) {
   throw new Error(lastError);
 }
 
+export async function waitForExactOpencodeHealth({
+  baseUrl,
+  username,
+  password,
+  expectedVersion,
+  timeoutMs = 15_000,
+  fetchImpl = fetch,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  let lastError = "OpenCode readiness probe did not succeed.";
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchImpl(
+        `${String(baseUrl).replace(/\/+$/, "")}/global/health`,
+        {
+          headers: {
+            Accept: "application/json",
+            Authorization: authorization,
+          },
+          redirect: "error",
+          signal: AbortSignal.timeout(Math.min(1_000, timeoutMs)),
+        },
+      );
+      const payload = response.ok ? await response.json() : null;
+      if (
+        response.ok
+        && payload
+        && typeof payload === "object"
+        && !Array.isArray(payload)
+        && Object.keys(payload).sort().join(",") === "healthy,version"
+        && payload.healthy === true
+        && payload.version === expectedVersion
+      ) {
+        return payload;
+      }
+      lastError = response.ok
+        ? "OpenCode health response did not match the pinned runtime contract."
+        : `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(lastError);
+}
+
 async function fetchJson(url, options = {}, timeoutMs = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -467,11 +534,9 @@ function resolveUserEnvFilePath() {
   return openworkEnvStorePath();
 }
 
-const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
-
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
-// are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
+// and executable controls are stripped so a tampered file cannot change the
+// trusted desktop runtime.
 function loadUserEnvFile() {
   try {
     const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
@@ -482,8 +547,7 @@ function loadUserEnvFile() {
       if (!entry || typeof entry !== "object") continue;
       const { key, value } = entry;
       if (typeof key !== "string" || typeof value !== "string") continue;
-      if (!USER_ENV_KEY_PATTERN.test(key)) continue;
-      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (!isUserEnvironmentInjectionKeyAllowed(key)) continue;
       out[key] = value;
     }
     return out;
@@ -574,6 +638,259 @@ export function mergeRuntimeChildEnv(
   };
 }
 
+const LOCAL_MVP_PARENT_ENV_NAMES = new Set([
+  "APPDATA",
+  "COLORTERM",
+  "COMSPEC",
+  "DISPLAY",
+  "FORCE_COLOR",
+  "GPG_TTY",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "LANG",
+  "LOCALAPPDATA",
+  "LOGNAME",
+  "NO_COLOR",
+  "NO_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "PWD",
+  "SHELL",
+  "SSH_AGENT_PID",
+  "SSH_AUTH_SOCK",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "SystemRoot",
+  "TEMP",
+  "TERM",
+  "TERM_PROGRAM",
+  "TERM_PROGRAM_VERSION",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERPROFILE",
+  "WAYLAND_DISPLAY",
+  "WINDIR",
+  "XAUTHORITY",
+  "__CF_USER_TEXT_ENCODING",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+]);
+
+const LOCAL_MVP_BLOCKED_OPENCODE_ENV_NAMES = new Set([
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_CONTENT",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_MODELS_URL",
+  "OPENCODE_MODELS_PATH",
+  "OPENCODE_DB",
+  "OPENCODE_PERMISSION",
+  "OPENCODE_AUTO_SHARE",
+  "OPENCODE_ALWAYS_NOTIFY_UPDATE",
+  "OPENCODE_EXPERIMENTAL",
+  "OPENCODE_ENABLE_EXA",
+  "OPENCODE_EXPERIMENTAL_EXA",
+  "OPENCODE_DISABLE_EMBEDDED_WEB_UI",
+  "OPENCODE_CONSOLE_TOKEN",
+  "OPENCODE_SERVER_USERNAME",
+  "OPENCODE_SERVER_PASSWORD",
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_HEADERS",
+  "OTEL_RESOURCE_ATTRIBUTES",
+]);
+
+const LOCAL_MVP_CONTROLLED_OPENCODE_EXTRA_NAMES = new Set([
+  "OPENCODE_CONFIG",
+  "OPENCODE_SERVER_USERNAME",
+  "OPENCODE_SERVER_PASSWORD",
+]);
+
+const LOCAL_MVP_FORCED_OPENCODE_ENV = Object.freeze({
+  OPENCODE_DISABLE_RUNTIME_DOWNLOADS: "true",
+  OPENCODE_DISABLE_MODELS_FETCH: "true",
+  OPENCODE_DISABLE_AUTOUPDATE: "true",
+  OPENCODE_DISABLE_SHARE: "true",
+  OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
+  OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
+  OPENCODE_DISABLE_REMOTE_CONFIG: "true",
+  OPENCODE_DISABLE_REMOTE_INSTRUCTIONS: "true",
+  OPENCODE_DISABLE_REMOTE_SKILLS: "true",
+  OPENCODE_ENABLE_EXA: "false",
+});
+
+/**
+ * @param {{
+ *   desktopRoot?: string;
+ *   resourcesPath?: string;
+ * }} [options]
+ */
+export function resolveAgencyAiTrustedPluginPaths({
+  desktopRoot,
+  resourcesPath = process.resourcesPath,
+} = {}) {
+  const roots = [
+    resourcesPath
+      ? path.resolve(resourcesPath, "opencode-plugins")
+      : null,
+    desktopRoot
+      ? path.resolve(
+          desktopRoot,
+          "..",
+          "server",
+          "dist",
+          "opencode-plugins",
+        )
+      : null,
+  ].filter(Boolean);
+  for (const root of roots) {
+    const candidates = AGENCYAI_LOCAL_OPENCODE_PLUGIN_NAMES.map((name) =>
+      path.join(root, `${name}.js`));
+    if (!candidates.every((candidate) => existsSync(candidate))) continue;
+    const canonicalRoot = realpathSync(root);
+    return candidates.map((candidate) => {
+      const stats = lstatSync(candidate);
+      if (!stats.isFile() || stats.isSymbolicLink()) {
+        throw new Error(
+          `AgencyAI trusted OpenCode plugin must be a regular non-symlink file: ${candidate}`,
+        );
+      }
+      const canonical = realpathSync(candidate);
+      if (
+        path.dirname(canonical) !== canonicalRoot
+        || path.basename(canonical) !== path.basename(candidate)
+      ) {
+        throw new Error(
+          `AgencyAI trusted OpenCode plugin resolves outside its reviewed directory: ${candidate}`,
+        );
+      }
+      return canonical;
+    });
+  }
+  throw new Error(
+    `AgencyAI trusted OpenCode plugins are missing. Checked: ${roots.join(", ")}`,
+  );
+}
+
+function isLocalMvpProviderParentEnvironmentName(name) {
+  if (
+    name.startsWith("OPENWORK_")
+    || name.startsWith("OPENCODE_")
+    || name.startsWith("OTEL_")
+  ) {
+    return false;
+  }
+  return /(?:_API_KEY|_ACCESS_KEY_ID|_SECRET_ACCESS_KEY|_AUTH_TOKEN|_ACCESS_TOKEN|_CREDENTIALS)$/.test(name);
+}
+
+function selectLocalMvpParentEnvironment(parentEnv) {
+  const selected = {};
+  for (const [name, value] of Object.entries(parentEnv ?? {})) {
+    if (typeof value !== "string") continue;
+    if (
+      LOCAL_MVP_PARENT_ENV_NAMES.has(name)
+      || name.startsWith("LC_")
+      || isLocalMvpProviderParentEnvironmentName(name)
+    ) {
+      selected[name] = value;
+    }
+  }
+  return selected;
+}
+
+function selectLocalMvpUserEnvironment(userEnv) {
+  const selected = {};
+  for (const [name, value] of Object.entries(userEnv ?? {})) {
+    if (
+      typeof value === "string"
+      && isUserEnvironmentInjectionKeyAllowed(name)
+    ) {
+      selected[name] = value;
+    }
+  }
+  return selected;
+}
+
+function prependExactPath(directory, currentPath) {
+  const entries = [
+    directory,
+    ...String(currentPath ?? "").split(path.delimiter).filter(Boolean),
+  ].filter(Boolean);
+  return [...new Set(entries)].join(path.delimiter);
+}
+
+/**
+ * Build the exact environment passed to local-mvp OpenCode processes.
+ *
+ * User env-store values are explicit user configuration and remain available
+ * to providers/tools. Ambient parent variables are allowlisted. Policy-owned
+ * OpenCode and telemetry variables are removed before controlled storage,
+ * launch credentials, and immutable no-download flags are projected.
+ */
+export function buildLocalMvpOpenCodeChildEnv({
+  userEnv = {},
+  parentEnv = {},
+  caEnv = {},
+  extra = {},
+  storageEnvironment = {},
+  toolchainDir = "",
+  trustedPluginPaths = [],
+} = {}) {
+  const selectedUser = selectLocalMvpUserEnvironment(userEnv);
+  const selectedParent = selectLocalMvpParentEnvironment(parentEnv);
+  const environment = mergeRuntimeChildEnv(
+    {
+      ...selectedUser,
+      ...selectedParent,
+      BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
+    },
+    caEnv,
+    {},
+    {},
+  );
+
+  for (const name of LOCAL_MVP_BLOCKED_OPENCODE_ENV_NAMES) {
+    delete environment[name];
+  }
+  for (const name of Object.keys(environment)) {
+    if (name.startsWith("OPENWORK_") || name.startsWith("OPENCODE_") || name.startsWith("OTEL_")) {
+      delete environment[name];
+    }
+  }
+
+  for (const [name, value] of Object.entries(extra)) {
+    if (typeof value !== "string") continue;
+    if (
+      name.startsWith("OPENCODE_")
+      && !LOCAL_MVP_CONTROLLED_OPENCODE_EXTRA_NAMES.has(name)
+    ) {
+      continue;
+    }
+    environment[name] = value;
+  }
+  for (const [name, value] of Object.entries(storageEnvironment)) {
+    if (typeof value === "string") environment[name] = value;
+  }
+  Object.assign(environment, LOCAL_MVP_FORCED_OPENCODE_ENV);
+  environment.OPENCODE_TRUSTED_PLUGIN_PATHS =
+    JSON.stringify(trustedPluginPaths);
+
+  const pathKey =
+    Object.prototype.hasOwnProperty.call(environment, "PATH")
+    || !Object.prototype.hasOwnProperty.call(environment, "Path")
+      ? "PATH"
+      : "Path";
+  const exactPath = prependExactPath(toolchainDir, environment[pathKey]);
+  if (exactPath) environment[pathKey] = exactPath;
+  return environment;
+}
+
 export function resolveRuntimeRemoteAccessEnabled(
   requested,
   allowRemoteAccess = true,
@@ -628,11 +945,27 @@ export function createRuntimeManager({
   storageEnvironment = {},
   allowRemoteAccess = true,
   productPolicy = null,
+  opencodeDistribution = null,
+  packagedRuntimeIntegrity = null,
   trustedRendererOrigin = null,
   embeddedServerModuleLoader = null,
 }) {
   const runtimeProductPolicy = immutableRuntimeProductPolicy(productPolicy);
   const localMvpRuntime = runtimeProductPolicy?.profile === "local-mvp";
+  const runtimeOpencodeDistribution = localMvpRuntime
+    ? validateOpencodeDistribution(opencodeDistribution)
+    : null;
+  const runtimeTarget = localMvpRuntime
+    ? distributionTarget(runtimeOpencodeDistribution, currentTargetTriple())
+    : null;
+  const runtimePackagedIntegrity = localMvpRuntime && packagedRuntimeIntegrity
+    ? Object.freeze({
+        ...packagedRuntimeIntegrity,
+        hashesByAbsolutePath: Object.freeze({
+          ...(packagedRuntimeIntegrity.hashesByAbsolutePath ?? {}),
+        }),
+      })
+    : null;
   const runtimeTrustedRendererOrigin = exactRuntimeOrigin(
     trustedRendererOrigin ?? runtimeProductPolicy?.rendererOrigin ?? null,
     "trustedRendererOrigin",
@@ -673,11 +1006,51 @@ export function createRuntimeManager({
   // This is populated only after the embedded server validates the exact
   // contract. runtimeStatus must report consumption, not merely launch input.
   let serverStorageAttestation = null;
-  const sidecarDirs = [
-    path.join(desktopRoot, "resources", "sidecars"),
-    process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
-    path.join(path.dirname(app.getPath("exe")), "sidecars"),
-  ].filter(Boolean);
+  const sidecarDirs = runtimePackagedIntegrity
+    ? [path.join(process.resourcesPath, "sidecars")]
+    : [
+        path.join(desktopRoot, "resources", "sidecars"),
+        process.resourcesPath
+          ? path.join(process.resourcesPath, "sidecars")
+          : null,
+        path.join(path.dirname(app.getPath("exe")), "sidecars"),
+      ].filter(Boolean);
+  const toolchainDirs = runtimeTarget
+    ? runtimePackagedIntegrity
+      ? [
+          path.join(
+            process.resourcesPath,
+            "toolchain",
+            runtimeTarget.target,
+          ),
+        ]
+      : [
+          path.join(
+            desktopRoot,
+            "resources",
+            "toolchain",
+            runtimeTarget.target,
+          ),
+          process.resourcesPath
+            ? path.join(
+                process.resourcesPath,
+                "toolchain",
+                runtimeTarget.target,
+              )
+            : null,
+          path.join(
+            path.dirname(app.getPath("exe")),
+            "toolchain",
+            runtimeTarget.target,
+          ),
+        ].filter(Boolean)
+    : [];
+  const trustedPluginPaths = localMvpRuntime
+    ? resolveAgencyAiTrustedPluginPaths({
+        desktopRoot,
+        resourcesPath: process.resourcesPath,
+      })
+    : [];
   let systemCaEnvPromise = null;
 
   function systemCaEnv() {
@@ -840,16 +1213,30 @@ export function createRuntimeManager({
   }
 
   async function buildChildEnv(extra = {}) {
+    const userEnv = loadUserEnvFile();
     /** @type {NodeJS.ProcessEnv} */
-    // User env is layered first so process.env + any caller overrides always
-    // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
-    // all loaders must agree on path + reserved-keys policy.
     const baseEnv = {
-      ...loadUserEnvFile(),
+      ...userEnv,
       ...process.env,
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
     };
     const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : await systemCaEnv();
+    if (localMvpRuntime) {
+      const verifiedRipgrep = resolveVerifiedRipgrepSync({
+        toolchainDirs,
+        asset: runtimeTarget.ripgrep,
+        packagedIntegrity: runtimePackagedIntegrity,
+      });
+      return buildLocalMvpOpenCodeChildEnv({
+        userEnv,
+        parentEnv: process.env,
+        caEnv,
+        extra,
+        storageEnvironment,
+        toolchainDir: path.dirname(verifiedRipgrep.path),
+        trustedPluginPaths,
+      });
+    }
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
     // the exported OS trust store through the same child env variable.
     const env = mergeRuntimeChildEnv(baseEnv, caEnv, extra, storageEnvironment);
@@ -909,6 +1296,17 @@ export function createRuntimeManager({
 
   function resolveOpencodeBinary(opencodeBinPath) {
     const explicitPath = typeof opencodeBinPath === "string" ? opencodeBinPath.trim() : "";
+    if (localMvpRuntime) {
+      if (explicitPath) {
+        throw new Error("Custom OpenCode paths are disabled in the local-mvp product");
+      }
+      return resolveVerifiedBundledOpencodeSync({
+        sidecarDirs,
+        asset: runtimeTarget.opencode,
+        target: runtimeTarget.target,
+        packagedIntegrity: runtimePackagedIntegrity,
+      });
+    }
     return explicitPath ? { path: explicitPath, source: "custom" } : resolveBinaryInfo("opencode");
   }
 
@@ -1025,7 +1423,23 @@ export function createRuntimeManager({
   }
 
   function engineDoctor(options = {}) {
-    const resolved = resolveOpencodeBinary(options?.opencodeBinPath);
+    let resolved;
+    try {
+      resolved = resolveOpencodeBinary(options?.opencodeBinPath);
+    } catch (error) {
+      return {
+        found: false,
+        inPath: false,
+        resolvedPath: null,
+        resolvedSource: null,
+        version: null,
+        supportsServe: false,
+        notes: [error instanceof Error ? error.message : String(error)],
+        serveHelpStatus: null,
+        serveHelpStdout: null,
+        serveHelpStderr: null,
+      };
+    }
     if (!resolved?.path) {
       return {
         found: false,
@@ -1034,7 +1448,9 @@ export function createRuntimeManager({
         resolvedSource: null,
         version: null,
         supportsServe: false,
-        notes: ["OpenCode binary not found in bundled sidecars or PATH."],
+        notes: [localMvpRuntime
+          ? "Verified bundled OpenCode binary not found."
+          : "OpenCode binary not found in bundled sidecars or PATH."],
         serveHelpStatus: null,
         serveHelpStdout: null,
         serveHelpStderr: null,
@@ -1287,7 +1703,9 @@ export function createRuntimeManager({
     const handle = await startEmbeddedServer({
       host,
       port: portSelection.port,
-      corsOrigins: runtimeTrustedRendererOrigin ? [runtimeTrustedRendererOrigin] : ["*"],
+      corsOrigins: runtimeTrustedRendererOrigin
+        ? [runtimeTrustedRendererOrigin]
+        : ["*"],
       approvalMode: localMvpRuntime ? "trusted-local-ui" : "auto",
       configPath: serverConfigPath,
       workspaces: workspacePaths,
@@ -1300,6 +1718,19 @@ export function createRuntimeManager({
       manageOpencode: options.manageOpencode === true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
+      ...(localMvpRuntime
+        ? {
+            managedOpencodeEnv: serverEnv,
+            expectedOpencodeVersion: runtimeOpencodeDistribution.binaryVersion,
+            opencodeDistribution: opencodeReadinessProvenance(
+              runtimeOpencodeDistribution,
+              runtimeTarget.opencode,
+              managedOpencode && "binarySha256" in managedOpencode
+                ? managedOpencode.binarySha256
+                : null,
+            ),
+          }
+        : {}),
     });
     inProcessServer = handle;
     serverStorageAttestation = handle.storage ?? null;
@@ -1405,7 +1836,9 @@ export function createRuntimeManager({
       OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
       OPENWORK_OPENCODE_USERNAME: username,
       OPENWORK_OPENCODE_PASSWORD: password,
-      ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
+      ...(!localMvpRuntime && options.opencodeEnableExa !== false
+        ? { OPENCODE_ENABLE_EXA: "1" }
+        : {}),
     });
 
     const args = [
@@ -1425,9 +1858,9 @@ export function createRuntimeManager({
       projectDir,
       "--opencode-port",
       String(opencodePort),
-      "--allow-external",
-      "--cors",
-      "*",
+      ...(!localMvpRuntime
+        ? ["--allow-external", "--cors", "*"]
+        : []),
     ];
 
     spawnManagedChild(orchestratorState, orchestratorProgram, args, { env });
@@ -1476,7 +1909,14 @@ export function createRuntimeManager({
       OPENCODE_SERVER_PASSWORD: password,
     });
 
-    const args = ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--cors", "*"];
+    const args = [
+      "serve",
+      "--hostname",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      ...(!localMvpRuntime ? ["--cors", "*"] : []),
+    ];
     engineState.execution = redactedExecutionSnapshot(opencodeBinary.path, args, projectDir, {
       OPENCODE_SERVER_USERNAME: username,
       OPENCODE_SERVER_PASSWORD: password,
@@ -1505,7 +1945,17 @@ export function createRuntimeManager({
     engineState.managedPid = null;
     engineState.managedIsAlive = null;
 
-    await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
+    if (localMvpRuntime) {
+      await waitForExactOpencodeHealth({
+        baseUrl: engineState.baseUrl,
+        username,
+        password,
+        expectedVersion: runtimeOpencodeDistribution.binaryVersion,
+        timeoutMs: 10_000,
+      });
+    } else {
+      await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
+    }
     return snapshotEngineState(engineState);
   }
 
@@ -1814,6 +2264,15 @@ export function createRuntimeManager({
   }
 
   async function engineInstall() {
+    if (localMvpRuntime) {
+      return {
+        ok: false,
+        status: -1,
+        stdout: "",
+        stderr:
+          "Engine installation is disabled. AgencyAI uses its verified bundled OpenCode runtime.",
+      };
+    }
     if (process.platform === "win32") {
       return {
         ok: false,
@@ -1848,12 +2307,12 @@ export function createRuntimeManager({
       throw new Error("server_name is required");
     }
 
-    const program = resolveBinary("opencode");
-    if (!program) {
+    const resolved = resolveOpencodeBinary();
+    if (!resolved?.path) {
       throw new Error("Failed to locate opencode.");
     }
 
-    const result = await runShellCommand(program, ["mcp", "auth", safeServerName], {
+    const result = await runShellCommand(resolved.path, ["mcp", "auth", safeServerName], {
       cwd: safeProjectDir,
       env: await buildChildEnv(),
       timeoutMs: 120_000,

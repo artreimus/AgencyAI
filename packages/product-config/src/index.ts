@@ -19,3 +19,5 @@ export function isProductFeatureEnabled(feature: ProductFeature): boolean {
 }
 
 export * from "./contract.js"
+export * from "./environment-policy.js"
+export * from "./opencode-policy.js"

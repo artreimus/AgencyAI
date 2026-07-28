@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/artreimus/AgencyAI-OpenCode",
+  "upstreamTag": "v1.17.11",
+  "upstreamCommit": "67aec2212010d67775c35e696d8b8b54902eb338",
+  "forkCommit": "b424e670490d6241dca6f7fbcb3d6608af69aa41",
+  "forkTag": "product-opencode-v1.17.11-p2",
+  "patchset": "local-runtime-policy-v1",
+  "patchCommits": [
+    "14c9607366e56d9c0c0f34c5575c7e9045b24c2b",
+    "2a117b609748bc9bda24f74bdaea24600eeba676",
+    "dd1c3809ac23b91ec2fbdebc47c18cc45d79ad03",
+    "6ea79c2d5630eef28faa1adba81d5e6d95602ce9",
+    "250187ae065e706e7f3d068215a587445d98c1eb",
+    "21f80fa95205275d38ff05490fb640e624dc315d",
+    "b4f05fef52047d30f5c4656dcd8480e2c4e72de7",
+    "d7a2e5ed280a976d4b16e96c33e6b4780af6a34b",
+    "b424e670490d6241dca6f7fbcb3d6608af69aa41"
+  ],
+  "binaryVersion": "1.17.11",
+  "sdkVersion": "1.17.11",
+  "sdkConsumers": [
+    "apps/app",
+    "apps/desktop",
+    "apps/orchestrator",
+    "apps/server"
+  ],
+  "targetAssets": {
+    "aarch64-apple-darwin": {
+      "workflowRunId": 30360214214,
+      "workflowRunUrl": "https://github.com/artreimus/AgencyAI-OpenCode/actions/runs/30360214214",
+      "workflowPath": ".github/workflows/agencyai-runtime.yml",
+      "headBranch": "agencyai-runtime-lock",
+      "artifactId": 8688522440,
+      "artifactName": "agencyai-opencode-1.17.11-darwin-arm64",
+      "artifactDigestSha256": "8c55f6522e4d250a31d9d34b5f8e436503db30111140cac036c8a8809f4a8bb0",
+      "artifactExpiresAt": "2026-10-26T12:43:49Z",
+      "archive": "opencode-darwin-arm64.zip",
+      "sourceArchiveSha256": "5811d2409155f4b642bcd193701f32a7db075bd53d3474095080f5ee08c3da55",
+      "binary": "opencode",
+      "sourceBinarySha256": "c85f31782b4d9ad932b669324c29da9ad72848a2bf0288357adf38b0042c97a2",
+      "provenanceSha256": "095c00174b5e6256c40e76acbb55ff12a682fc4ee98ecbb81c5b3d1f79b324d8",
+      "spdxSha256": "f10183e19c01fe8d42ad5d522ded63d0a94cc982fb74043231f637f4120be2ec",
+      "cycloneDxSha256": "d6235eab039f3e221f8e5834790dcfc6a3d92bec01cba337f2e9ddc0942e38c0",
+      "buildSourceCycloneDxSha256": "511da52ca8c04404c8b41c54a92ccba215162548dc33b494130e9c09a85e8ec7",
+      "artifactFiles": {
+        "AGENCYAI_FORK_NOTICE.md": "47325078c5489b609f51be72642c4e197c30c34b7b88a547eb0d512ddfb88317",
+        "LICENSE-OpenCode": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+        "SHA256SUMS": "f421cdfed0ac8657a1e161f4172425e012bcb2ef429d6123198307d2407e36ff",
+        "opencode-build-source.cdx.json": "511da52ca8c04404c8b41c54a92ccba215162548dc33b494130e9c09a85e8ec7",
+        "opencode-darwin-arm64.cdx.json": "d6235eab039f3e221f8e5834790dcfc6a3d92bec01cba337f2e9ddc0942e38c0",
+        "opencode-darwin-arm64.spdx.json": "f10183e19c01fe8d42ad5d522ded63d0a94cc982fb74043231f637f4120be2ec",
+        "opencode-darwin-arm64.zip": "5811d2409155f4b642bcd193701f32a7db075bd53d3474095080f5ee08c3da55",
+        "provenance.json": "095c00174b5e6256c40e76acbb55ff12a682fc4ee98ecbb81c5b3d1f79b324d8"
+      }
+    }
+  },
+  "toolchain": {
+    "ripgrep": {
+      "version": "15.1.0",
+      "sourceRepository": "https://github.com/BurntSushi/ripgrep",
+      "license": "MIT",
+      "targetAssets": {
+        "aarch64-apple-darwin": {
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz",
+          "archive": "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz",
+          "sourceArchiveSha256": "378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715",
+          "binary": "rg",
+          "sourceBinarySha256": "4fdf1d8365af224bc70e3c1490d8461d859c37cc70e739a11e987af0215f3e94",
+          "licenseFile": "LICENSE-MIT",
+          "licenseSha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "runtimeDownloadsDenied": true,
+    "remoteConfigDenied": true
+  }
+}

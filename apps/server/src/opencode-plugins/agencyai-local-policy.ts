@@ -7,6 +7,8 @@ type MutableOpenCodeConfig = {
   provider?: unknown;
   mcp?: Record<string, unknown>;
   experimental?: unknown;
+  instructions?: unknown;
+  skills?: unknown;
 };
 
 export function enforceAgencyAiLocalMcpPolicy(config: MutableOpenCodeConfig): void {

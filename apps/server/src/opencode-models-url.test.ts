@@ -22,9 +22,27 @@ async function writeFakeOpencodeBin(root: string): Promise<string> {
     "const port = portIndex >= 0 ? process.argv[portIndex + 1] : \"0\";",
     "const capturePath = process.env.OPENWORK_CAPTURE_MODELS_URL_FILE;",
     "if (capturePath) await Bun.write(capturePath, process.env.OPENCODE_MODELS_URL ?? \"\");",
-    "console.log(`opencode server listening on http://127.0.0.1:${port}`);",
-    "process.on(\"SIGTERM\", () => process.exit(0));",
-    "setInterval(() => undefined, 1_000);",
+    "const username = process.env.OPENCODE_SERVER_USERNAME ?? \"\";",
+    "const password = process.env.OPENCODE_SERVER_PASSWORD ?? \"\";",
+    "const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).toString(\"base64\")}`;",
+    "const server = Bun.serve({",
+    "  hostname: \"127.0.0.1\",",
+    "  port: Number(port),",
+    "  fetch(request) {",
+    "    const url = new URL(request.url);",
+    "    if (request.headers.get(\"Authorization\") !== expectedAuthorization) {",
+    "      return new Response(null, { status: 401 });",
+    "    }",
+    "    if (url.pathname === \"/global/health\") {",
+    "      return Response.json({ healthy: true, version: \"1.17.11\" });",
+    "    }",
+    "    return new Response(null, { status: 404 });",
+    "  },",
+    "});",
+    "process.on(\"SIGTERM\", () => {",
+    "  server.stop(true);",
+    "  process.exit(0);",
+    "});",
   ].join("\n"));
   await chmod(binPath, 0o755);
   return binPath;
@@ -85,7 +103,7 @@ describe("resolveOpencodeModelsUrl", () => {
 });
 
 describe("startEmbeddedServer managed OpenCode models URL", () => {
-  test("injects an explicit OPENCODE_MODELS_URL override", async () => {
+  test("keeps an ambient OPENCODE_MODELS_URL out of local-mvp managed OpenCode", async () => {
     const root = await mkdtemp(join(tmpdir(), "openwork-embedded-models-url-"));
     const workspace = join(root, "workspace");
     const capturePath = join(root, "models-url.txt");
@@ -125,10 +143,28 @@ describe("startEmbeddedServer managed OpenCode models URL", () => {
         manageOpencode: true,
         opencodeBin,
         opencodeCwd: workspace,
+        managedOpencodeEnv: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          OPENWORK_CAPTURE_MODELS_URL_FILE: capturePath,
+          ...storageEnv,
+        },
+        expectedOpencodeVersion: "1.17.11",
+        opencodeDistribution: {
+          source: "bundled-patched",
+          binarySha256:
+            "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+          sourceBinarySha256:
+            "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+          upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
+          forkCommit: "b424e670490d6241dca6f7fbcb3d6608af69aa41",
+          forkTag: "product-opencode-v1.17.11-p2",
+          patchset: "local-runtime-policy-v1",
+        },
       });
       await handle.stop();
 
-      expect(await readFile(capturePath, "utf8")).toBe("https://catalog.example.test/models");
+      expect(await readFile(capturePath, "utf8")).toBe("");
     } finally {
       restoreProcessEnv("OPENWORK_DEV_MODE", previousDevMode);
       restoreProcessEnv("OPENCODE_MODELS_URL", previousModelsUrl);

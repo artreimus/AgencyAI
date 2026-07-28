@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { createRuntimeManager } from "./runtime.mjs";
+import {
+  currentTargetTriple,
+  sha256FileSync,
+  validateOpencodeDistribution,
+} from "./opencode-distribution.mjs";
 
 const TRUSTED_RENDERER_ORIGIN = "agencyai-internal://renderer";
 const RAW_GRANT = "aai_da_runtime-test-secret";
@@ -60,6 +72,66 @@ async function createHarness(options = {}) {
   const workspacePath = path.join(root, "workspace");
   await mkdir(userData, { recursive: true });
   await mkdir(workspacePath, { recursive: true });
+  const target = currentTargetTriple();
+  if (!target) throw new Error("Test platform has no AgencyAI distribution target");
+  const sidecarDir = path.join(root, "desktop", "resources", "sidecars");
+  const toolchainDir = path.join(
+    root,
+    "desktop",
+    "resources",
+    "toolchain",
+    target,
+  );
+  await mkdir(sidecarDir, { recursive: true });
+  await mkdir(toolchainDir, { recursive: true });
+  const pluginDir = path.join(root, "server", "dist", "opencode-plugins");
+  await mkdir(pluginDir, { recursive: true });
+  await Promise.all(
+    [
+      "agencyai-local-extensions",
+      "agencyai-local-capabilities",
+      "openwork-office-attachments",
+      "openwork-anthropic-adaptive-thinking",
+      "openwork-anthropic-tool-schema",
+      "agencyai-local-policy",
+    ].map((name) =>
+      writeFile(path.join(pluginDir, `${name}.js`), "export {};\n", "utf8")),
+  );
+  const executableSuffix = process.platform === "win32" ? ".exe" : "";
+  const opencodeBin = path.join(
+    sidecarDir,
+    `opencode-${target}${executableSuffix}`,
+  );
+  const ripgrepBin = path.join(toolchainDir, `rg${executableSuffix}`);
+  await writeFile(
+    opencodeBin,
+    "#!/bin/sh\nprintf '%s\\n' '1.17.11'\n",
+    "utf8",
+  );
+  await writeFile(
+    ripgrepBin,
+    "#!/bin/sh\nprintf '%s\\n' 'ripgrep 15.1.0'\n",
+    "utf8",
+  );
+  await chmod(opencodeBin, 0o755);
+  await chmod(ripgrepBin, 0o755);
+  const rawDistribution = JSON.parse(
+    await readFile(
+      path.resolve(import.meta.dirname, "..", "..", "..", "opencode-distribution.json"),
+      "utf8",
+    ),
+  );
+  rawDistribution.targetAssets[target] = {
+    ...rawDistribution.targetAssets["aarch64-apple-darwin"],
+    sourceBinarySha256: sha256FileSync(opencodeBin),
+  };
+  rawDistribution.toolchain.ripgrep.targetAssets[target] = {
+    ...rawDistribution.toolchain.ripgrep.targetAssets[
+      "aarch64-apple-darwin"
+    ],
+    sourceBinarySha256: sha256FileSync(ripgrepBin),
+  };
+  const opencodeDistribution = validateOpencodeDistribution(rawDistribution);
   cleanup.push(() => rm(root, { recursive: true, force: true }));
 
   const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
@@ -140,6 +212,7 @@ async function createHarness(options = {}) {
     listLocalWorkspacePaths: async () => [workspacePath],
     allowRemoteAccess: true,
     productPolicy,
+    opencodeDistribution,
     trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
     embeddedServerModuleLoader: async () => ({
       async startEmbeddedServer(input) {
@@ -170,6 +243,23 @@ async function createHarness(options = {}) {
 }
 
 describe("desktop approval runtime plumbing", () => {
+  it("disables engine installation and rejects custom OpenCode paths", async () => {
+    const harness = await createHarness();
+
+    assert.deepEqual(await harness.runtime.engineInstall(), {
+      ok: false,
+      status: -1,
+      stdout: "",
+      stderr:
+        "Engine installation is disabled. AgencyAI uses its verified bundled OpenCode runtime.",
+    });
+    const doctor = harness.runtime.engineDoctor({
+      opencodeBinPath: "/tmp/untrusted-opencode",
+    });
+    assert.equal(doctor.found, false);
+    assert.match(doctor.notes.join("\n"), /Custom OpenCode paths are disabled/);
+  });
+
   it("launches local-mvp with immutable policy, loopback-only binding, exact CORS, and trusted approval mode", async () => {
     const harness = await createHarness();
     harness.productPolicy.features.remoteAccess = true;
@@ -187,6 +277,32 @@ describe("desktop approval runtime plumbing", () => {
     assert.equal(launch.productPolicy.features.remoteAccess, false);
     assert.equal(Object.isFrozen(launch.productPolicy), true);
     assert.equal(Object.isFrozen(launch.productPolicy.features), true);
+    assert.equal(launch.expectedOpencodeVersion, "1.17.11");
+    assert.equal(launch.opencodeDistribution.source, "bundled-patched");
+    assert.match(launch.opencodeDistribution.binarySha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      launch.opencodeDistribution.forkTag,
+      "product-opencode-v1.17.11-p2",
+    );
+    assert.equal(
+      launch.opencodeDistribution.upstreamCommit,
+      "67aec2212010d67775c35e696d8b8b54902eb338",
+    );
+    assert.equal(
+      launch.managedOpencodeEnv.OPENCODE_DISABLE_RUNTIME_DOWNLOADS,
+      "true",
+    );
+    assert.equal(
+      launch.managedOpencodeEnv.OPENCODE_DISABLE_MODELS_FETCH,
+      "true",
+    );
+    assert.equal(launch.managedOpencodeEnv.OPENCODE_ENABLE_EXA, "false");
+    assert.equal(launch.managedOpencodeEnv.OPENCODE_MODELS_URL, undefined);
+    assert.equal(launch.managedOpencodeEnv.OTEL_EXPORTER_OTLP_ENDPOINT, undefined);
+    assert.match(
+      launch.opencodeBin,
+      new RegExp(`opencode-${currentTargetTriple()}`),
+    );
 
     const info = await harness.runtime.openworkServerInfo();
     assert.equal(info.remoteAccessEnabled, false);

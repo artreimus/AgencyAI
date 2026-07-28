@@ -1,6 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
-import { openworkPluginPath } from "./openwork-extensions-plugin-path.js";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  agencyAiLocalPluginUrls,
+  isAllowedAgencyAiLocalPluginSpec,
+  openworkPluginPath,
+} from "./openwork-extensions-plugin-path.js";
 
 function withPluginDir(value: string | undefined, fn: () => void) {
   const previous = process.env.OPENWORK_EXTENSIONS_PLUGIN_DIR;
@@ -69,5 +82,57 @@ describe("openworkPluginPath", () => {
       expect(openworkPluginPath("openwork-extensions-preview", here))
         .toBe(join(here, "opencode-plugins", "openwork-extensions-preview.ts"));
     });
+  });
+});
+
+describe("AgencyAI packaged plugin policy", () => {
+  test("emits only allowlisted local file URLs", () => {
+    withPluginDir("/tmp/untrusted-plugins", () => {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const root = join(here, "opencode-plugins");
+      const specs = agencyAiLocalPluginUrls(here);
+
+      expect(specs).toHaveLength(6);
+      expect(specs.every((spec) =>
+        isAllowedAgencyAiLocalPluginSpec(spec, root))).toBe(true);
+      expect(specs.some((spec) => spec.includes("opencode-chrome-devtools"))).toBe(false);
+      expect(specs.some((spec) => spec.includes("/tmp/untrusted-plugins"))).toBe(false);
+    });
+  });
+
+  test("rejects package, remote, relative, outside, missing, and symlink specs", () => {
+    const temp = mkdtempSync(join(tmpdir(), "agencyai-plugin-policy-"));
+    const root = join(temp, "opencode-plugins");
+    const outsidePath = join(temp, "agencyai-local-policy.js");
+    const allowedPath = join(root, "agencyai-local-capabilities.js");
+    const symlinkPath = join(root, "agencyai-local-policy.js");
+    try {
+      mkdirSync(root, { recursive: true });
+      writeFileSync(outsidePath, "export default {};\n");
+      writeFileSync(allowedPath, "export default {};\n");
+      symlinkSync(outsidePath, symlinkPath);
+
+      expect(isAllowedAgencyAiLocalPluginSpec(
+        pathToFileURL(allowedPath).href,
+        root,
+      )).toBe(true);
+      expect(isAllowedAgencyAiLocalPluginSpec("opencode-chrome-devtools", root)).toBe(false);
+      expect(isAllowedAgencyAiLocalPluginSpec("https://plugins.invalid/plugin.js", root)).toBe(false);
+      expect(isAllowedAgencyAiLocalPluginSpec("./agencyai-local-policy.js", root)).toBe(false);
+      expect(isAllowedAgencyAiLocalPluginSpec(
+        pathToFileURL(outsidePath).href,
+        root,
+      )).toBe(false);
+      expect(isAllowedAgencyAiLocalPluginSpec(
+        pathToFileURL(join(root, "unreviewed.js")).href,
+        root,
+      )).toBe(false);
+      expect(isAllowedAgencyAiLocalPluginSpec(
+        pathToFileURL(symlinkPath).href,
+        root,
+      )).toBe(false);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 });

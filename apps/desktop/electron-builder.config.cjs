@@ -43,6 +43,19 @@ function publishConfiguration(profile) {
   };
 }
 
+function macSigningConfiguration(env = process.env) {
+  const configuredIdentity = [
+    env.CSC_LINK,
+    env.CSC_NAME,
+    env.APPLE_CODESIGN_IDENTITY,
+    env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY,
+  ].some((value) => typeof value === "string" && value.trim());
+  return {
+    sign: "scripts/electron-sign.cjs",
+    ...(configuredIdentity ? {} : { identity: "-" }),
+  };
+}
+
 function createElectronBuilderConfig(profile) {
   const { brand } = profile;
   const artifactName = `${brand.artifactPrefix}-\${os}-\${arch}-\${version}.\${ext}`;
@@ -67,6 +80,10 @@ function createElectronBuilderConfig(profile) {
       "package.json",
     ],
     extraResources: [
+      {
+        from: "../../opencode-distribution.json",
+        to: "opencode-distribution.json",
+      },
       {
         from: "../app/dist",
         to: "app-dist",
@@ -110,6 +127,7 @@ function createElectronBuilderConfig(profile) {
       hardenedRuntime: true,
       gatekeeperAssess: false,
       notarize: false,
+      ...macSigningConfiguration(),
       entitlements: "build/entitlements.mac.plist",
       entitlementsInherit: "build/entitlements.mac.plist",
       ...helperIds,
@@ -121,6 +139,11 @@ function createElectronBuilderConfig(profile) {
           }
         : {}),
       extraResources: [
+        {
+          from: "resources/toolchain/aarch64-apple-darwin",
+          to: "toolchain/aarch64-apple-darwin",
+          filter: ["rg", "LICENSE-ripgrep"],
+        },
         {
           from: "resources/sidecars",
           to: "sidecars",
@@ -237,3 +260,4 @@ async function electronBuilderConfig() {
 module.exports = electronBuilderConfig;
 module.exports.createElectronBuilderConfig = createElectronBuilderConfig;
 module.exports.loadSelectedProductProfile = loadSelectedProductProfile;
+module.exports.macSigningConfiguration = macSigningConfiguration;

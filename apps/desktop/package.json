@@ -16,18 +16,18 @@
     "dev:electron": "node ./scripts/electron-dev.mjs",
     "build": "node ./scripts/electron-build.mjs",
     "build:electron": "node ./scripts/electron-build.mjs",
-    "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.config.cjs",
-    "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.config.cjs --dir",
+    "package:electron": "node ./scripts/electron-build.mjs --release && pnpm exec electron-builder --config electron-builder.config.cjs",
+    "package:electron:dir": "node ./scripts/electron-build.mjs --release && pnpm exec electron-builder --config electron-builder.config.cjs --dir",
     "electron": "pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
     "pretest": "pnpm --filter @openwork/product-config build",
     "test:builder-config": "pnpm --filter @openwork/product-config build && node --test scripts/electron-builder-config.test.mjs",
-    "test": "node --test electron/agent-context-diagnostics-fetch.test.mjs electron/app-build-info.test.mjs electron/architecture-policy.test.mjs electron/brand-app-name.test.mjs electron/brand-icon-windows.test.mjs electron/connect-link.test.mjs electron/desktop-product-policy.test.mjs electron/dev-profile.test.mjs electron/main-desktop-approval-policy.test.mjs electron/migration.test.mjs electron/no-bare-external-fetch.test.mjs electron/nuke.test.mjs electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/runtime-desktop-approval.test.mjs electron/storage-layout.test.mjs electron/ui-control-server.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs scripts/electron-builder-config.test.mjs scripts/run-local-profile.test.mjs"
+    "test": "node --test electron/agent-context-diagnostics-fetch.test.mjs electron/app-build-info.test.mjs electron/architecture-policy.test.mjs electron/brand-app-name.test.mjs electron/brand-icon-windows.test.mjs electron/connect-link.test.mjs electron/desktop-product-policy.test.mjs electron/dev-profile.test.mjs electron/main-desktop-approval-policy.test.mjs electron/migration.test.mjs electron/no-bare-external-fetch.test.mjs electron/nuke.test.mjs electron/open-external.test.mjs electron/opencode-distribution.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/runtime-desktop-approval.test.mjs electron/storage-layout.test.mjs electron/ui-control-server.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs scripts/archive-policy.test.mjs scripts/electron-builder-config.test.mjs scripts/opencode-artifact-evidence.test.mjs scripts/run-local-profile.test.mjs"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.17.11",
+    "@opencode-ai/sdk": "1.17.11",
     "@openwork/paths": "workspace:*",
     "@openwork/product-config": "workspace:*",
     "better-sqlite3": "^11.10.0",
@@ -40,6 +40,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@electron/osx-sign": "2.6.0",
     "@openwork/types": "workspace:*",
     "electron": "^35.0.0",
     "electron-builder": "^26.15.3",

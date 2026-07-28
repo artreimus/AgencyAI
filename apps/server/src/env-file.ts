@@ -2,6 +2,7 @@ import { platform } from "node:os";
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { openworkEnvStorePath } from "@openwork/paths";
+import { isUserEnvironmentInjectionKeyAllowed } from "@openwork/product-config";
 
 import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 import { ensureDir, exists } from "./utils.js";
@@ -45,7 +46,8 @@ export function isValidEnvKey(key: string): boolean {
 }
 
 export function isReservedEnvKey(key: string): boolean {
-  return isInternalEnvKey(key) && !PERSISTABLE_INTERNAL_KEYS.has(key);
+  if (isInternalEnvKey(key)) return !PERSISTABLE_INTERNAL_KEYS.has(key);
+  return !isUserEnvironmentInjectionKeyAllowed(key);
 }
 
 function isInternalEnvKey(key: string): boolean {
@@ -235,7 +237,7 @@ export class EnvService {
     const store = await readStore(path, { tolerateInvalid: true });
     const out: Record<string, string> = {};
     for (const entry of store.variables) {
-      if (isInternalEnvKey(entry.key)) continue;
+      if (!isUserEnvironmentInjectionKeyAllowed(entry.key)) continue;
       out[entry.key] = entry.value;
     }
     return out;
@@ -251,7 +253,7 @@ export class InvalidEnvKeyError extends Error {
   constructor(key: string, code: "invalid_env_key" | "reserved_env_key") {
     super(
       code === "reserved_env_key"
-        ? `Environment variable name is reserved for OpenWork internals: ${key}`
+        ? `Environment variable name is reserved for application or runtime control: ${key}`
         : `Invalid environment variable name: ${key}`,
     );
     this.code = code;

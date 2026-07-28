@@ -1,6 +1,5 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 
 const sidecarBases = [
   "opencode",
@@ -50,28 +49,67 @@ function resolveMacAppPath(context) {
   return fallback ? path.join(context.appOutDir, fallback) : null;
 }
 
-function signComputerUseHelper(context, computerUseHelperAppName) {
+function resolveResourcesDir(context) {
   const appPath = resolveMacAppPath(context);
-  if (!appPath) return;
+  if (appPath) return path.join(appPath, "Contents", "Resources");
+  return path.join(context.appOutDir, "resources");
+}
 
-  const helperPath = path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
-  if (!fs.existsSync(helperPath)) {
-    throw new Error(`Missing Computer Use helper app at ${helperPath}`);
+async function writePackagedRuntimeIntegrity(context, triple) {
+  const resourcesDir = resolveResourcesDir(context);
+  const distributionPath = path.join(resourcesDir, "opencode-distribution.json");
+  if (!fs.existsSync(distributionPath) || !fs.lstatSync(distributionPath).isFile()) {
+    throw new Error(`Missing packaged OpenCode distribution manifest: ${distributionPath}`);
   }
+  const {
+    PACKAGED_RUNTIME_INTEGRITY_FILE_NAME,
+    assertRegularFileWithinRootSync,
+    packagedRuntimeIntegrityRelativePaths,
+    sha256FileSync,
+  } = await import("../electron/opencode-distribution.mjs");
+  assertRegularFileWithinRootSync(
+    distributionPath,
+    resourcesDir,
+    "Packaged OpenCode distribution manifest",
+  );
+  const relativePaths = packagedRuntimeIntegrityRelativePaths(triple);
 
-  const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
-    || process.env.CSC_NAME
-    || process.env.APPLE_CODESIGN_IDENTITY
-    || "-";
-  const args = ["--force", "--deep", "--options", "runtime", "--sign", identity];
-  if (identity !== "-") args.push("--timestamp");
-  args.push(helperPath);
-
-  const result = spawnSync("codesign", args, { stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`codesign failed for Computer Use helper app with status ${result.status}`);
+  const files = relativePaths.map((relativePath) => {
+    const filePath = path.resolve(resourcesDir, ...relativePath.split("/"));
+    assertRegularFileWithinRootSync(
+      filePath,
+      resourcesDir,
+      `Packaged runtime integrity input ${relativePath}`,
+    );
+    return {
+      path: relativePath,
+      sha256: sha256FileSync(filePath),
+    };
+  });
+  const integrity = {
+    schemaVersion: 1,
+    hashPhase: "post-nested-signing",
+    target: triple,
+    distributionManifestSha256: sha256FileSync(distributionPath),
+    files,
+  };
+  const integrityPath = path.join(
+    resourcesDir,
+    PACKAGED_RUNTIME_INTEGRITY_FILE_NAME,
+  );
+  if (fs.existsSync(integrityPath)) {
+    const stats = fs.lstatSync(integrityPath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error(`Unsafe packaged runtime integrity output: ${integrityPath}`);
+    }
+    fs.unlinkSync(integrityPath);
   }
+  fs.writeFileSync(integrityPath, `${JSON.stringify(integrity, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o644,
+  });
+  return integrity;
 }
 
 function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
@@ -124,13 +162,16 @@ async function afterPack(context) {
     }
   }
 
-  const { getBuildProductProfile } = await import("@openwork/product-config");
-  const productProfile = getBuildProductProfile();
-  signComputerUseHelper(context, productProfile.brand.computerUse.bundleName);
+  // macOS writes this only after nested signing in the custom sign hook.
+  if (context.electronPlatformName !== "darwin") {
+    await writePackagedRuntimeIntegrity(context, triple);
+  }
 }
 
 module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeArch = normalizeArch;
+module.exports.resolveResourcesDir = resolveResourcesDir;
 module.exports.sidecarBases = sidecarBases;
 module.exports.targetTriple = targetTriple;
+module.exports.writePackagedRuntimeIntegrity = writePackagedRuntimeIntegrity;

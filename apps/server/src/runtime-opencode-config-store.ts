@@ -28,6 +28,11 @@ export type RuntimeOpencodeConfig = {
   };
   provider?: Record<string, unknown>;
   experimental?: Record<string, unknown>;
+  instructions?: string[];
+  skills?: {
+    paths?: string[];
+    urls?: string[];
+  };
 };
 
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
@@ -44,6 +49,27 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const experimental = isRecord(value.experimental)
     ? value.experimental
     : undefined;
+  const instructions = Array.isArray(value.instructions)
+    ? value.instructions.filter((item): item is string => typeof item === "string")
+    : undefined;
+  const skills = isRecord(value.skills)
+    ? {
+        ...(Array.isArray(value.skills.paths)
+          ? {
+              paths: value.skills.paths.filter(
+                (item): item is string => typeof item === "string",
+              ),
+            }
+          : {}),
+        ...(Array.isArray(value.skills.urls)
+          ? {
+              urls: value.skills.urls.filter(
+                (item): item is string => typeof item === "string",
+              ),
+            }
+          : {}),
+      }
+    : undefined;
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(plugin ? { plugin } : {}),
@@ -52,6 +78,8 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
     ...(experimental ? { experimental } : {}),
+    ...(instructions ? { instructions } : {}),
+    ...(skills ? { skills } : {}),
   };
 }
 

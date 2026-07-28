@@ -22,6 +22,10 @@ import { getBuildProductProfile } from "@openwork/product-config";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
+import {
+  loadOpencodeDistributionSync,
+  loadPackagedRuntimeIntegritySync,
+} from "./opencode-distribution.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
@@ -651,6 +655,21 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const PRODUCT_PROFILE = getBuildProductProfile();
+const OPENCODE_DISTRIBUTION_RECORD = PRODUCT_PROFILE.profile === "local-mvp"
+  ? loadOpencodeDistributionSync({
+      desktopRoot: path.resolve(__dirname, ".."),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    })
+  : null;
+const OPENCODE_DISTRIBUTION = OPENCODE_DISTRIBUTION_RECORD?.manifest ?? null;
+const PACKAGED_RUNTIME_INTEGRITY =
+  PRODUCT_PROFILE.profile === "local-mvp" && app.isPackaged
+    ? loadPackagedRuntimeIntegritySync({
+        resourcesPath: process.resourcesPath,
+        distributionManifestPath: OPENCODE_DISTRIBUTION_RECORD.path,
+      })
+    : null;
 const TRUSTED_RENDERER_ORIGIN = resolveDesktopApprovalTrustedRendererOrigin({
   productProfile: PRODUCT_PROFILE,
   isPackaged: app.isPackaged,
@@ -1727,6 +1746,8 @@ const runtimeManager = createRuntimeManager({
   storageEnvironment: storageLayoutEnvironment(storageLayout),
   allowRemoteAccess: PRODUCT_PROFILE.features.remoteAccess,
   productPolicy: PRODUCT_PROFILE,
+  opencodeDistribution: OPENCODE_DISTRIBUTION,
+  packagedRuntimeIntegrity: PACKAGED_RUNTIME_INTEGRITY,
   trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
 });
 

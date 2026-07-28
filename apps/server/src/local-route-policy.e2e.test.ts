@@ -394,7 +394,11 @@ let baseUrl = "";
 let trapBaseUrl = "";
 let openworkServer: Served | null = null;
 let dependencyTrap: ServeResult | null = null;
-let opencodeHealthMode: "healthy" | "unhealthy" | "redirect" = "healthy";
+let opencodeHealthMode:
+  | "healthy"
+  | "unhealthy"
+  | "redirect"
+  | "wrong-version" = "healthy";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -480,7 +484,9 @@ beforeAll(async () => {
         }
         return Response.json({
           healthy: true,
-          version: "1.17.11",
+          version: opencodeHealthMode === "wrong-version"
+            ? "1.17.12"
+            : "1.17.11",
           source: "dependency-trap",
         });
       }
@@ -562,6 +568,17 @@ beforeAll(async () => {
     logFormat: "pretty",
     logRequests: false,
     productPolicy: LOCAL_MVP_POLICY,
+    opencodeDistribution: {
+      source: "bundled-patched",
+      binarySha256:
+        "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+      sourceBinarySha256:
+        "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+      upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
+      forkCommit: "b424e670490d6241dca6f7fbcb3d6608af69aa41",
+      forkTag: "product-opencode-v1.17.11-p2",
+      patchset: "local-runtime-policy-v1",
+    },
   } satisfies ServerConfig;
 
   openworkServer = await startServer(config);
@@ -611,7 +628,19 @@ describe("local-mvp route policy", () => {
         openwork: "loopback",
         opencode: "loopback",
       },
-      opencode: { healthy: true },
+      opencode: {
+        version: "1.17.11",
+        healthy: true,
+        source: "bundled-patched",
+        binarySha256:
+          "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+        sourceBinarySha256:
+          "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
+        upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
+        forkCommit: "b424e670490d6241dca6f7fbcb3d6608af69aa41",
+        forkTag: "product-opencode-v1.17.11-p2",
+        patchset: "local-runtime-policy-v1",
+      },
       modelCatalog: { source: "opencode-embedded" },
     });
     expect(
@@ -943,5 +972,31 @@ describe("local-mvp route policy", () => {
       details: { reason: "preflight_header_not_allowed" },
     });
     expect(dependencyHits).toHaveLength(before);
+  });
+
+  test("does not claim readiness for a different OpenCode version", async () => {
+    const before = dependencyHits.length;
+    opencodeHealthMode = "wrong-version";
+    try {
+      const response = await apiFetch("/ready", {
+        headers: requestHeaders("client"),
+      });
+      const body = await responseRecord(response);
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({
+        ready: false,
+        opencode: {
+          version: "1.17.11",
+          healthy: false,
+          source: "bundled-patched",
+        },
+      });
+      expect(dependencyHits.slice(before)).toEqual([
+        { method: "GET", path: "/global/health" },
+      ]);
+    } finally {
+      opencodeHealthMode = "healthy";
+    }
   });
 });
