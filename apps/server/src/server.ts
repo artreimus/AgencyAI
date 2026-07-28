@@ -5,6 +5,14 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
+import {
+  AGENCYAI_DESKTOP_APPROVAL_HEADER,
+  DesktopApprovalCredentialError,
+  TRUSTED_DESKTOP_OPERATIONS,
+  type ApiApprovalActor,
+  type ApprovalActor,
+  type TrustedDesktopOperation,
+} from "./desktop-approval-credentials.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -64,6 +72,21 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { decideLocalOpencodeProxy } from "./opencode-proxy-policy.js";
+import {
+  assertRawOpencodeConfigMutationAllowed,
+  assertRuntimeOpencodeMutationAllowed,
+} from "./opencode-config-mutation-policy.js";
+import { isOpenworkCloudMcpName } from "./mcp-product-policy.js";
+import {
+  decideLocalCorsRequest,
+  type LocalCorsResponseHeaders,
+} from "./cors-policy.js";
+import {
+  effectiveServerProductPolicy,
+  isLocalMvpProduct,
+  serverFeatureEnabled,
+} from "./product-policy.js";
 import {
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
@@ -76,7 +99,9 @@ import {
   mergeRuntimeProviderUpdate,
   readRuntimeOpencodeConfig,
   runtimeDisabledProviderList,
+  runtimeDisabledProviderListForProduct,
   runtimeMcpMap,
+  runtimeMcpMapForProduct,
   type RuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -202,6 +227,15 @@ const OPENWORK_VOICE_REALTIME_TOOLS = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertLocalMcpAllowed(config: ServerConfig, name: string): void {
+  if (
+    isLocalMvpProduct(config.productPolicy)
+    && isOpenworkCloudMcpName(name)
+  ) {
+    throw new ApiError(404, "feature_disabled", "OpenWork Cloud MCP is disabled");
+  }
 }
 
 function readStringField(value: unknown, key: string): string {
@@ -772,7 +806,34 @@ function normalizeOpencodeProxyPath(proxyPath: string): string {
   return normalized || "/";
 }
 
-export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
+export function assertOpencodeProxyAllowed(
+  actor: Actor,
+  method: string,
+  proxyPath: string,
+  config?: ServerConfig,
+): string {
+  if (config && isLocalMvpProduct(config.productPolicy)) {
+    const decision = decideLocalOpencodeProxy(method, proxyPath);
+    if (!decision.allowed) {
+      throw new ApiError(
+        decision.status,
+        decision.code,
+        decision.code === "feature_disabled"
+          ? "This OpenCode feature is disabled"
+          : "OpenCode proxy route is not allowed",
+        { reason: decision.reason },
+      );
+    }
+    const scope = actor.scope ?? "viewer";
+    if (scopeRank(scope) < scopeRank(decision.minimumScope)) {
+      throw new ApiError(403, "forbidden", "Insufficient token scope", {
+        required: decision.minimumScope,
+        scope,
+      });
+    }
+    return decision.canonicalPath;
+  }
+
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
 
@@ -793,6 +854,7 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
       throw new ApiError(403, "forbidden", "Viewer tokens cannot reply to permission requests");
     }
   }
+  return normalizeOpencodeProxyPath(proxyPath);
 }
 
 function isSessionCommandProxyRequest(method: string, proxyPath: string) {
@@ -800,6 +862,7 @@ function isSessionCommandProxyRequest(method: string, proxyPath: string) {
 }
 
 export async function startServer(config: ServerConfig): Promise<ServeResult> {
+  const localMvp = isLocalMvpProduct(config.productPolicy);
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -859,11 +922,24 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
-          const workspace = await resolveWorkspace(config, mount.workspaceId);
+          const canonicalPath = assertOpencodeProxyAllowed(
+            actor,
+            request.method,
+            mount.restPath,
+            config,
+          );
+          const workspace = localMvp
+            ? await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId)
+            : await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace,
+            proxyPath: canonicalPath,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -874,7 +950,26 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         }
       };
 
-      if (request.method === "OPTIONS") {
+      if (localMvp) {
+        const corsDecision = decideLocalCorsRequest({
+          configuredOrigin: config.corsOrigins[0],
+          requestMethod: request.method,
+          origin: request.headers.get("origin"),
+          accessControlRequestMethod: request.headers.get("access-control-request-method"),
+          accessControlRequestHeaders: request.headers.get("access-control-request-headers"),
+        });
+        if (!corsDecision.allowed) {
+          errorMessage = corsDecision.reason;
+          return finalize(jsonResponse({
+            code: corsDecision.code,
+            message: "CORS request denied",
+            details: { reason: corsDecision.reason },
+          }, corsDecision.status));
+        }
+        if (corsDecision.isPreflight) {
+          return finalize(new Response(null, { status: 204 }));
+        }
+      } else if (request.method === "OPTIONS") {
         return finalize(new Response(null, { status: 204 }));
       }
 
@@ -885,6 +980,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
       const mount = parseWorkspaceMount(url.pathname);
       if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+        if (localMvp) {
+          errorMessage = "opencode_proxy_not_allowed";
+          return finalize(jsonResponse({
+            code: "opencode_proxy_not_allowed",
+            message: "Use the canonical workspace OpenCode mount",
+          }, 404));
+        }
         return proxyWorkspaceOpencodeMount(mount);
       }
 
@@ -906,13 +1008,31 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       }
 
       if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
+        if (localMvp) {
+          errorMessage = "opencode_proxy_not_allowed";
+          return finalize(jsonResponse({
+            code: "opencode_proxy_not_allowed",
+            message: "Aggregate OpenCode proxy is disabled",
+          }, 404));
+        }
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
         try {
           const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          const canonicalPath = assertOpencodeProxyAllowed(
+            actor,
+            request.method,
+            url.pathname,
+            config,
+          );
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace: config.workspaces[0],
+            proxyPath: canonicalPath,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -925,22 +1045,25 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
-        const staticUiResponse = await serveStaticUi(request, config);
-        if (staticUiResponse) return finalize(staticUiResponse);
+        if (!localMvp) {
+          const staticUiResponse = await serveStaticUi(request, config);
+          if (staticUiResponse) return finalize(staticUiResponse);
+        }
         errorMessage = "not_found";
         return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
       }
 
       authMode = route.auth;
       try {
+        const authenticatedClient = route.auth === "client"
+          ? await authenticateClientRequest(request, config, tokens)
+          : null;
         const actor =
           route.auth === "host-token"
             ? requireHostToken(request, config)
             : route.auth === "host"
               ? await requireHost(request, config, tokens)
-              : route.auth === "client"
-                ? await requireClient(request, config, tokens)
-                : undefined;
+              : authenticatedClient?.actor;
         const response = await route.handler({
           request,
           url,
@@ -950,6 +1073,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           reloadEvents,
           tokens,
           actor,
+          desktopApprovalTransport: authenticatedClient?.desktopApprovalTransport,
         });
         return finalize(response);
       } catch (error) {
@@ -1011,6 +1135,81 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && (
+        hostname === "127.0.0.1"
+        || hostname === "localhost"
+        || hostname === "::1"
+        || hostname === "[::1]"
+      );
+  } catch {
+    return false;
+  }
+}
+
+function isRedirectFetchFailure(error: unknown): boolean {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!current || seen.has(current)) return false;
+    seen.add(current);
+    if (current instanceof Error && /redirect/i.test(current.message)) {
+      return true;
+    }
+    if (typeof current !== "object") return false;
+    current = Reflect.get(current, "cause");
+  }
+  return false;
+}
+
+/**
+ * Managed engine requests may follow redirects in upstream mode for backward
+ * compatibility. The local desktop profile must keep the loopback boundary
+ * invariant: a compromised or confused loopback engine cannot redirect a
+ * request body or forwarded headers to another origin.
+ */
+async function fetchManagedOpencodeEngine(
+  config: ServerConfig,
+  input: Parameters<typeof loopbackFetch>[0],
+  init?: Parameters<typeof loopbackFetch>[1],
+  fetchImpl: (
+    input: Parameters<typeof loopbackFetch>[0],
+    init?: Parameters<typeof loopbackFetch>[1],
+  ) => Promise<Response> = loopbackFetch,
+): Promise<Response> {
+  const localMvp = isLocalMvpProduct(config.productPolicy);
+  try {
+    if (localMvp) {
+      return await fetchImpl(new Request(input, { ...init, redirect: "error" }));
+    }
+    return await fetchImpl(input, init);
+  } catch (error) {
+    if (localMvp && isRedirectFetchFailure(error)) {
+      throw new ApiError(
+        502,
+        "opencode_engine_redirect_rejected",
+        "OpenCode engine redirect was rejected",
+      );
+    }
+    throw error;
+  }
+}
+
+function createLocalMvpOpencodeSdkFetch(
+  config: ServerConfig,
+  fetchImpl: typeof fetch,
+): typeof fetch {
+  const run = (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => fetchManagedOpencodeEngine(config, input, init, fetchImpl);
+  return Object.assign(run, { preconnect: fetchImpl.preconnect });
+}
+
 function buildOpencodeDirectoryHeader(directory: string) {
   return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
 }
@@ -1041,7 +1240,9 @@ export function createWorkspaceOpencodeClient(
   const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
-    : directory ? baseFetch : undefined;
+    : isLocalMvpProduct(config.productPolicy)
+      ? createLocalMvpOpencodeSdkFetch(config, baseFetch)
+      : directory ? baseFetch : undefined;
 
   return createOpencodeClient({
     baseUrl: connection.baseUrl?.trim(),
@@ -1077,17 +1278,29 @@ async function proxyOpencodeRequest(input: {
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
+  if (isLocalMvpProduct(input.config.productPolicy) && !isLoopbackHttpUrl(baseUrl)) {
+    throw new ApiError(404, "feature_disabled", "Non-loopback OpenCode targets are disabled");
+  }
 
   const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
+  const target = new URL(buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search));
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
   headers.delete("x-openwork-host-token");
   headers.delete("x-openwork-client-id");
+  headers.delete(AGENCYAI_DESKTOP_APPROVAL_HEADER);
   headers.delete("host");
   headers.delete("origin");
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
+  if (isLocalMvpProduct(input.config.productPolicy)) {
+    headers.delete("x-opencode-directory");
+    headers.delete("x-opencode-workspace");
+    target.searchParams.delete("directory");
+    target.searchParams.delete("workspace");
+    target.searchParams.delete("worktree");
+    if (directory) target.searchParams.set("directory", directory);
+  }
   if (directory && !headers.has("x-opencode-directory")) {
     headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
   }
@@ -1106,7 +1319,7 @@ async function proxyOpencodeRequest(input: {
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
   // Managed OpenCode proxy traffic is loopback/engine I/O; keep streaming on Node fetch.
   if (isSessionCommandProxyRequest(method, proxyPath)) {
-    void loopbackFetch(targetUrl, {
+    void fetchManagedOpencodeEngine(input.config, target, {
       method,
       headers,
       body,
@@ -1115,7 +1328,7 @@ async function proxyOpencodeRequest(input: {
     });
     return jsonResponse({ ok: true, accepted: true });
   }
-  const response = await loopbackFetch(targetUrl, {
+  const response = await fetchManagedOpencodeEngine(input.config, target, {
     method,
     headers,
     body,
@@ -1151,6 +1364,16 @@ function jsonResponse(data: unknown, status = 200) {
 }
 
 function withCors(response: Response, request: Request, config: ServerConfig) {
+  if (isLocalMvpProduct(config.productPolicy)) {
+    const decision = decideLocalCorsRequest({
+      configuredOrigin: config.corsOrigins[0],
+      requestMethod: request.method,
+      origin: request.headers.get("origin"),
+      accessControlRequestMethod: request.headers.get("access-control-request-method"),
+      accessControlRequestHeaders: request.headers.get("access-control-request-headers"),
+    });
+    return withCorsResponseHeaders(response, decision.responseHeaders);
+  }
   const origin = request.headers.get("origin");
   const allowedOrigins = config.corsOrigins;
   let allowOrigin: string | null = null;
@@ -1172,7 +1395,31 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   return new Response(response.body, { status: response.status, headers });
 }
 
-async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+function withCorsResponseHeaders(
+  response: Response,
+  corsHeaders: LocalCorsResponseHeaders,
+): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(corsHeaders)) {
+    if (value) headers.set(name, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+type AuthenticatedClientRequest = {
+  actor: Actor;
+  desktopApprovalTransport?: RequestContext["desktopApprovalTransport"];
+};
+
+async function authenticateClientRequest(
+  request: Request,
+  config: ServerConfig,
+  tokens: TokenService,
+): Promise<AuthenticatedClientRequest> {
   const header = request.headers.get("authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
@@ -1183,8 +1430,40 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   if (!scope) {
     throw new ApiError(401, "unauthorized", "Invalid bearer token");
   }
-  const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
-  return { type: "remote", clientId, tokenHash: hashToken(token), scope };
+  const tokenHash = hashToken(token);
+  const clientId = request.headers.get("x-openwork-client-id")?.trim()
+    || `api_${tokenHash.slice(0, 16)}`;
+  const actor: Actor = {
+    type: isLocalMvpProduct(config.productPolicy) ? "api" : "remote",
+    clientId,
+    tokenHash,
+    scope,
+  };
+
+  const credential = request.headers.get(AGENCYAI_DESKTOP_APPROVAL_HEADER)?.trim() ?? "";
+  if (!credential) return { actor };
+  if (!isLocalMvpProduct(config.productPolicy) || !config.desktopApprovalCredentials) {
+    throw new ApiError(401, "desktop_approval_invalid", "Invalid desktop approval credential");
+  }
+  const rendererOrigin = request.headers.get("origin")?.trim() ?? "";
+  const expectedOrigin = config.corsOrigins[0] ?? "";
+  if (!rendererOrigin || rendererOrigin !== expectedOrigin) {
+    throw new ApiError(403, "origin_not_allowed", "Renderer origin is not allowed");
+  }
+
+  return {
+    actor,
+    desktopApprovalTransport: {
+      credential,
+      bearerToken: token,
+      rendererOrigin,
+      serverOrigin: new URL(request.url).origin,
+    },
+  };
+}
+
+async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+  return (await authenticateClientRequest(request, config, tokens)).actor;
 }
 
 function requireHostToken(request: Request, config: ServerConfig): Actor {
@@ -1217,21 +1496,33 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
 
 function buildCapabilities(config: ServerConfig): Capabilities {
   const writeEnabled = !config.readOnly;
+  const productPolicy = effectiveServerProductPolicy(config.productPolicy);
+  const localMvp = isLocalMvpProduct(productPolicy);
   const schemaVersion = 1;
   const sandboxBackend = resolveSandboxBackend();
-  const sandboxEnabled = resolveSandboxEnabled(sandboxBackend);
+  const sandboxEnabled = localMvp && sandboxBackend === "none"
+    ? false
+    : resolveSandboxEnabled(sandboxBackend);
   const inboxEnabled = resolveInboxEnabled();
   const outboxEnabled = resolveOutboxEnabled();
   const maxBytes = resolveInboxMaxBytes();
-  const toyUiEnabled = resolveToyUiEnabled();
-  const browserProvider = resolveBrowserProvider();
-  const opencodeConfigured = config.workspaces.some((workspace) => Boolean(workspace.baseUrl?.trim()));
+  const toyUiEnabled = !localMvp && resolveToyUiEnabled();
+  const browserProvider = productPolicy.features.browserAutomation
+    ? resolveBrowserProvider()
+    : { enabled: false, placement: "external", mode: "none" } as const;
+  const opencodeConfigured = config.workspaces.some((workspace) => {
+    const baseUrl = resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim() ?? "";
+    return Boolean(baseUrl) && (!localMvp || isLoopbackHttpUrl(baseUrl));
+  });
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     skills: { read: true, write: writeEnabled, source: "openwork" },
-    plugins: { read: true, write: writeEnabled },
+    plugins: {
+      read: true,
+      write: writeEnabled && productPolicy.features.runtimePluginInstall,
+    },
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
@@ -1484,6 +1775,9 @@ function createRoutes(
   engineMcpServerState: EngineMcpServerState,
 ): Route[] {
   const routes: Route[] = [];
+  const productPolicy = effectiveServerProductPolicy(config.productPolicy);
+  const cloudEnabled = productPolicy.features.openworkCloud;
+  const runtimePluginInstallEnabled = productPolicy.features.runtimePluginInstall;
   registerCoreRoutes({
     routes,
     config,
@@ -1539,29 +1833,32 @@ function createRoutes(
     unwrapOpencodeResult,
   });
 
-  registerCloudMcpRoutes({
-    routes,
-    config,
-    jsonResponse,
-    readJsonBody,
-    ensureWritable,
-    requireClientScope,
-    resolveWorkspace,
-    resolveOpencodeDirectory,
-    createWorkspaceOpencodeClient,
-    refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
-    registerRuntimeMcp: (routeConfig, workspace, onlyNames, options) =>
-      syncRuntimeMcpToOpencodeEngine(
-        routeConfig,
-        workspace,
-        onlyNames,
-        options,
-        engineMcpServerState,
-      ),
-    serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
-  });
+  if (cloudEnabled) {
+    registerCloudMcpRoutes({
+      routes,
+      config,
+      jsonResponse,
+      readJsonBody,
+      ensureWritable,
+      requireClientScope,
+      resolveWorkspace,
+      resolveOpencodeDirectory,
+      createWorkspaceOpencodeClient,
+      refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
+      registerRuntimeMcp: (routeConfig, workspace, onlyNames, options) =>
+        syncRuntimeMcpToOpencodeEngine(
+          routeConfig,
+          workspace,
+          onlyNames,
+          options,
+          engineMcpServerState,
+        ),
+      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+    });
+  }
 
-  addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
+  if (cloudEnabled) {
+    addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceForInspection(config, ctx.params.id);
     if (workspace.workspaceType === "remote") {
@@ -1613,7 +1910,8 @@ function createRoutes(
     } finally {
       releaseReservation();
     }
-  });
+    });
+  }
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -1621,12 +1919,14 @@ function createRoutes(
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
       await readRuntimeOpencodeConfig(config, workspace.id),
+      config.productPolicy,
     );
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
   });
 
-  addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
+  if (cloudEnabled) {
+    addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const openwork = await readOpenworkConfigForWorkspace(config, workspace);
     return jsonResponse(readDesktopCloudSyncState(openwork));
@@ -1808,7 +2108,7 @@ function createRoutes(
     return jsonResponse({ item: imported, preview: bundle.preview, warnings: result.warnings });
   });
 
-  addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
+    addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -1847,13 +2147,15 @@ function createRoutes(
     }
 
     return jsonResponse({ item: removed, warnings: [] });
-  });
+    });
+  }
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
       await readRuntimeOpencodeConfig(config, workspace.id),
+      config.productPolicy,
     );
     const foldersConfig = readAuthorizedFoldersFromOpencodeConfig(opencode, workspace.path);
     return jsonResponse(buildAuthorizedFoldersResponse(workspace, foldersConfig));
@@ -1876,7 +2178,11 @@ function createRoutes(
 
     const persistedOpencode = await readOpencodeConfig(workspace.path);
     const runtimeOpencode = await readRuntimeOpencodeConfig(config, workspace.id);
-    const existingOpencode = mergeOpencodeConfigs(persistedOpencode, runtimeOpencode);
+    const existingOpencode = mergeOpencodeConfigs(
+      persistedOpencode,
+      runtimeOpencode,
+      config.productPolicy,
+    );
     const existingFoldersConfig = readAuthorizedFoldersFromOpencodeConfig(existingOpencode, workspace.path);
     const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
       folders,
@@ -1916,7 +2222,8 @@ function createRoutes(
     return jsonResponse(response);
   });
 
-  addRoute(routes, "POST", "/workspace/:id/runtime-config/migrate", "client", async (ctx) => {
+  if (productPolicy.features.legacyOpenWorkImport) {
+    addRoute(routes, "POST", "/workspace/:id/runtime-config/migrate", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -1971,7 +2278,8 @@ function createRoutes(
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
 
     return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openworkError });
-  });
+    });
+  }
 
   addRoute(routes, "POST", "/workspace/:id/runtime-config/disabled-providers", "client", async (ctx) => {
     ensureWritable(config);
@@ -1979,6 +2287,12 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const providers = parseDisabledProvidersPayload(body.providers);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.patch",
+      summary: "Update disabled model providers",
+      paths: [openworkRuntimeConfigFilePath(config)],
+    });
     const result = await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
       ...current,
       disabled_providers: providers,
@@ -1990,7 +2304,10 @@ function createRoutes(
 
     return jsonResponse({
       ok: true,
-      disabledProviders: runtimeDisabledProviderList(result.config),
+      disabledProviders: runtimeDisabledProviderListForProduct(
+        result.config,
+        config.productPolicy,
+      ),
     });
   });
 
@@ -2076,6 +2393,11 @@ function createRoutes(
     }
 
     const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
+    assertRawOpencodeConfigMutationAllowed(
+      config.productPolicy,
+      scope,
+      content,
+    );
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: scope === "global" ? "config.global.write" : "config.write",
@@ -2133,6 +2455,13 @@ function createRoutes(
 
     if (!opencode && !openwork) {
       throw new ApiError(400, "invalid_payload", "opencode or openwork updates required");
+    }
+
+    if (opencode) {
+      assertRuntimeOpencodeMutationAllowed(
+        config.productPolicy,
+        ensurePlainObject(opencode),
+      );
     }
 
     await requireApproval(ctx, {
@@ -2245,7 +2574,8 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "POST", "/workspace/:id/plugins", "client", async (ctx) => {
+  if (runtimePluginInstallEnabled) {
+    addRoute(routes, "POST", "/workspace/:id/plugins", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -2279,7 +2609,7 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "DELETE", "/workspace/:id/plugins/:name", "client", async (ctx) => {
+    addRoute(routes, "DELETE", "/workspace/:id/plugins/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -2310,7 +2640,8 @@ function createRoutes(
     }
     const result = await listPlugins(config, workspace.id, workspace.path, false);
     return jsonResponse(result);
-  });
+    });
+  }
 
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -2439,9 +2770,10 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/mcp", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
+    assertLocalMcpAllowed(config, name);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
     const configPayload = body.config as Record<string, unknown> | undefined;
     if (!configPayload) {
       throw new ApiError(400, "invalid_payload", "MCP config is required");
@@ -2483,8 +2815,9 @@ function createRoutes(
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
+    assertLocalMcpAllowed(config, name);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "mcp.remove",
@@ -2519,8 +2852,9 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/mcp/:name/enabled", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
+    assertLocalMcpAllowed(config, name);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
       throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
@@ -3222,6 +3556,9 @@ async function reloadOpencodeEngine(
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
+  if (isLocalMvpProduct(config.productPolicy) && !isLoopbackHttpUrl(baseUrl)) {
+    throw new ApiError(404, "feature_disabled", "Non-loopback OpenCode targets are disabled");
+  }
 
   const directory = resolveOpencodeDirectory(workspace);
   const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
@@ -3232,8 +3569,14 @@ async function reloadOpencodeEngine(
   let response: Response;
   try {
     // OpenCode reload targets the managed loopback engine; CA trust is irrelevant.
-    response = await loopbackFetch(targetUrl, { method: "POST", headers });
+    response = await fetchManagedOpencodeEngine(config, targetUrl, { method: "POST", headers });
   } catch (error) {
+    if (
+      error instanceof ApiError
+      && error.code === "opencode_engine_redirect_rejected"
+    ) {
+      throw error;
+    }
     throw new ApiError(
       503,
       "opencode_engine_unreachable",
@@ -3249,7 +3592,9 @@ async function reloadOpencodeEngine(
     });
   }
 
-  markOpenworkCloudMcpStale(workspace, directory);
+  if (serverFeatureEnabled("openworkCloud", config.productPolicy)) {
+    markOpenworkCloudMcpStale(workspace, directory);
+  }
   // Re-register runtime-DB MCPs: dispose rebuilds engine state from disk
   // configs (including the server-managed runtime config file for the
   // primary workspace), but other workspaces' runtime MCPs only reach the
@@ -3265,8 +3610,9 @@ async function reloadOpencodeEngine(
   } catch (error) {
     logRuntimeMcpSyncError({ config, workspace, trigger: "engine_reload", error });
   }
-  try {
-    const health = await reconcilePersistedOpenworkCloudMcp({
+  if (serverFeatureEnabled("openworkCloud", config.productPolicy)) {
+    try {
+      const health = await reconcilePersistedOpenworkCloudMcp({
       config,
       workspace,
       directory,
@@ -3283,9 +3629,10 @@ async function reloadOpencodeEngine(
         ),
       trigger: "engine_reload",
     });
-    logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "engine_reload", health });
-  } catch (error) {
-    logPersistedCloudMcpReconcileError({ config, workspace, trigger: "engine_reload", error });
+      logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "engine_reload", health });
+    } catch (error) {
+      logPersistedCloudMcpReconcileError({ config, workspace, trigger: "engine_reload", error });
+    }
   }
 }
 
@@ -3311,10 +3658,18 @@ async function syncRuntimeMcpToOpencodeEngine(
   if (!baseUrl || !connectionIdentity) {
     return { status: "skipped", syncedNames: [], failures: [] };
   }
+  if (isLocalMvpProduct(config.productPolicy) && !isLoopbackHttpUrl(baseUrl)) {
+    return { status: "skipped", syncedNames: [], failures: [] };
+  }
 
   const runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
-  const entries = Object.entries(runtimeMcpMap(runtimeConfig)).filter(
-    ([name]) => !onlyNames || onlyNames.includes(name),
+  const entries = Object.entries(runtimeMcpMapForProduct(
+    runtimeConfig,
+    config.productPolicy,
+  )).filter(
+    ([name]) => (
+      (!onlyNames || onlyNames.includes(name))
+    ),
   );
   if (entries.length === 0) {
     if (!onlyNames) {
@@ -3348,7 +3703,7 @@ async function syncRuntimeMcpToOpencodeEngine(
   const failures: EngineMcpSyncFailure[] = [];
   const registrations: EngineMcpRegistrationResult[] = [];
   for (const [name, mcpConfig] of entries) {
-    const registration = await postMcpEntryWithRetry(url, headers, name, mcpConfig);
+    const registration = await postMcpEntryWithRetry(config, url, headers, name, mcpConfig);
     registrations.push(registration);
     if (registration.failure) failures.push(registration.failure);
   }
@@ -3402,6 +3757,7 @@ async function syncRuntimeMcpToOpencodeEngine(
 // (the engine is often mid-rebuild right after a dispose). 4xx responses
 // are not retried — they won't change.
 async function postMcpEntryWithRetry(
+  config: ServerConfig,
   url: URL,
   headers: Record<string, string>,
   name: string,
@@ -3412,7 +3768,7 @@ async function postMcpEntryWithRetry(
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, engineMcpSyncRetryDelayMs()));
     try {
       // Runtime MCP registration targets the managed loopback engine.
-      const response = await loopbackFetch(url, {
+      const response = await fetchManagedOpencodeEngine(config, url, {
         method: "POST",
         headers,
         body: JSON.stringify({ name, config: mcpConfig }),
@@ -4185,8 +4541,9 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
     } catch (error) {
       logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
     }
-    try {
-      const health = await reconcilePersistedOpenworkCloudMcp({
+    if (serverFeatureEnabled("openworkCloud", config.productPolicy)) {
+      try {
+        const health = await reconcilePersistedOpenworkCloudMcp({
         config,
         workspace,
         directory: resolveOpencodeDirectory(workspace),
@@ -4203,9 +4560,10 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
           ),
         trigger: "startup",
       });
-      logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "startup", health });
-    } catch (error) {
-      logPersistedCloudMcpReconcileError({ config, workspace, trigger: "startup", error });
+        logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "startup", health });
+      } catch (error) {
+        logPersistedCloudMcpReconcileError({ config, workspace, trigger: "startup", error });
+      }
     }
   }
 }
@@ -4221,6 +4579,9 @@ async function disconnectMcpFromOpencodeEngine(
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) return;
+  if (isLocalMvpProduct(config.productPolicy) && !isLoopbackHttpUrl(baseUrl)) {
+    return;
+  }
 
   const url = new URL(baseUrl);
   url.pathname = `/mcp/${encodeURIComponent(name)}/disconnect`;
@@ -4231,7 +4592,11 @@ async function disconnectMcpFromOpencodeEngine(
   if (connection.authHeader) headers.Authorization = connection.authHeader;
 
   // MCP disconnect targets the managed loopback engine.
-  const response = await loopbackFetch(url, { method: "POST", headers, signal: AbortSignal.timeout(15_000) });
+  const response = await fetchManagedOpencodeEngine(config, url, {
+    method: "POST",
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!response.ok) {
     const body = parseOpencodeErrorBody(await response.text());
     throw new ApiError(502, "opencode_mcp_disconnect_failed", `Failed to disconnect MCP ${name} from the engine`, {
@@ -4245,8 +4610,51 @@ async function requireApproval(
   ctx: RequestContext,
   input: Omit<ApprovalRequest, "id" | "createdAt" | "actor">,
 ): Promise<void> {
-  const actor = ctx.actor ?? { type: "remote" };
-  const result = await ctx.approvals.requestApproval({ ...input, actor });
+  let actor = ctx.actor ?? { type: "api" };
+  let approvalActor: ApprovalActor = {
+    type: "api",
+    clientId: actor.clientId ?? actor.tokenHash ?? "api",
+  } satisfies ApiApprovalActor;
+  const transport = ctx.desktopApprovalTransport;
+  if (transport) {
+    const trustedOperation = TRUSTED_DESKTOP_OPERATIONS.includes(
+      input.action as TrustedDesktopOperation,
+    )
+      ? input.action as TrustedDesktopOperation
+      : null;
+    if (!trustedOperation || !ctx.config.desktopApprovalCredentials) {
+      throw new ApiError(
+        403,
+        "desktop_approval_scope_mismatch",
+        "Desktop approval credential is outside its authorized scope",
+      );
+    }
+    try {
+      approvalActor = ctx.config.desktopApprovalCredentials.authenticateAndConsume({
+        ...transport,
+        workspaceId: input.workspaceId,
+        operation: trustedOperation,
+      });
+      actor = {
+        type: "desktop",
+        scope: actor.scope,
+        webContentsId: approvalActor.webContentsId,
+        workspaceId: approvalActor.workspaceId,
+        operation: approvalActor.operation,
+      };
+      ctx.actor = actor;
+    } catch (error) {
+      if (error instanceof DesktopApprovalCredentialError) {
+        throw new ApiError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
+  }
+  const result = await ctx.approvals.requestApproval({
+    ...input,
+    actor,
+    approvalActor,
+  });
   if (!result.allowed) {
     throw new ApiError(403, "write_denied", "Write request denied", {
       requestId: result.id,

@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  LOCAL_MVP_FEATURES,
+  PRODUCT_FEATURES,
+  type ProductFeatures,
+} from "@openwork/product-config";
 import { parse } from "jsonc-parser";
 
 import {
-  legacySweepStatePath,
   readLegacyConfigSweepState,
+  sweepLegacyConfigContent,
   sweepLegacyOpenCodeConfig,
 } from "./legacy-config-sweep.js";
 import type { ServerProductPolicy } from "./product-policy.js";
@@ -16,11 +21,18 @@ const roots: string[] = [];
 const NOW = new Date("2026-07-15T12:34:56Z");
 const LOCAL_MVP_POLICY = {
   profile: "local-mvp",
-  features: { legacyOpenWorkImport: false },
+  features: LOCAL_MVP_FEATURES,
+  networkPolicy: "user-authorized",
+  rendererOrigin: "agencyai-internal://renderer",
 } satisfies ServerProductPolicy;
+const UPSTREAM_FEATURES = Object.freeze(
+  Object.fromEntries(PRODUCT_FEATURES.map((feature) => [feature, true])),
+) as ProductFeatures;
 const UPSTREAM_POLICY = {
   profile: "upstream",
-  features: { legacyOpenWorkImport: true },
+  features: UPSTREAM_FEATURES,
+  networkPolicy: "user-authorized",
+  rendererOrigin: "openwork-internal://renderer",
 } satisfies ServerProductPolicy;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,11 +76,6 @@ async function writeLegacyFile(root: string, name: string, content: string): Pro
   return path;
 }
 
-async function countBackups(root: string, name: string): Promise<number> {
-  const entries = await readdir(legacyDir(root));
-  return entries.filter((entry) => entry.startsWith(`${name}.openwork-backup-`)).length;
-}
-
 function parseRecord(content: string): Record<string, unknown> {
   const parsed: unknown = parse(content);
   return isRecord(parsed) ? parsed : {};
@@ -110,9 +117,7 @@ describe("legacy OpenCode config sweep", () => {
     expect(await readLegacyConfigSweepState(config)).toBeNull();
   });
 
-  test("removes only OpenWork-managed legacy keys and preserves user content", async () => {
-    const root = await createRoot();
-    const config = configFor(root);
+  test("removes only OpenWork-managed legacy keys and preserves user content", () => {
     const original = `{
   // user MCP comment
   "mcp": {
@@ -132,14 +137,8 @@ describe("legacy OpenCode config sweep", () => {
   "userSetting": true
 }
 `;
-    const path = await writeLegacyFile(root, "opencode.jsonc", original);
-
-    const state = await sweepLegacyOpenCodeConfig(config, {
-      homeDir: root,
-      now: NOW,
-      productPolicy: UPSTREAM_POLICY,
-    });
-    const after = await readFile(path, "utf8");
+    const swept = sweepLegacyConfigContent(original);
+    const after = swept.content;
     const parsed = parseRecord(after);
     const mcp = isRecord(parsed.mcp) ? parsed.mcp : {};
     const agent = isRecord(parsed.agent) ? parsed.agent : {};
@@ -153,83 +152,80 @@ describe("legacy OpenCode config sweep", () => {
     expect(parsed.default_agent).toBeUndefined();
     expect(plugin).toEqual(["user-plugin"]);
     expect(parsed.userSetting).toBe(true);
-
-    const sweptFile = state.files.find((entry) => entry.path === path);
-    expect(sweptFile?.removedKeys).toEqual(["mcp.openwork-cloud", "agent.openwork", "default_agent", "plugin"]);
-    expect(typeof sweptFile?.backupPath).toBe("string");
-    if (sweptFile?.backupPath) {
-      expect(await readFile(sweptFile.backupPath, "utf8")).toBe(original);
-    }
-
-    const storedState = await readLegacyConfigSweepState(config);
-    expect(storedState?.files.length).toBe(1);
+    expect(swept.removedKeys).toEqual([
+      "mcp.openwork-cloud",
+      "agent.openwork",
+      "default_agent",
+      "plugin",
+    ]);
   });
 
-  test("skips after a successful first run", async () => {
-    const root = await createRoot();
-    const config = configFor(root);
-    const path = await writeLegacyFile(root, "config.json", `{ "default_agent": "openwork" }\n`);
+  test("is idempotent after a successful content sweep", () => {
+    const first = sweepLegacyConfigContent(
+      `{ "default_agent": "openwork" }\n`,
+    );
+    const second = sweepLegacyConfigContent(first.content);
 
-    await sweepLegacyOpenCodeConfig(config, {
-      homeDir: root,
-      now: NOW,
-      productPolicy: UPSTREAM_POLICY,
+    expect(first.removedKeys).toEqual(["default_agent"]);
+    expect(second).toEqual({
+      content: first.content,
+      removedKeys: [],
     });
-    const contentAfterFirstRun = await readFile(path, "utf8");
-    const backupsAfterFirstRun = await countBackups(root, "config.json");
-    const stateAfterFirstRun = await readFile(legacySweepStatePath(config), "utf8");
-
-    await sweepLegacyOpenCodeConfig(config, {
-      homeDir: root,
-      now: new Date("2026-07-15T13:00:00Z"),
-      productPolicy: UPSTREAM_POLICY,
-    });
-
-    expect(await readFile(path, "utf8")).toBe(contentAfterFirstRun);
-    expect(await countBackups(root, "config.json")).toBe(backupsAfterFirstRun);
-    expect(await readFile(legacySweepStatePath(config), "utf8")).toBe(stateAfterFirstRun);
   });
 
-  test("leaves files without OpenWork-managed keys untouched", async () => {
-    const root = await createRoot();
-    const config = configFor(root);
+  test("leaves content without OpenWork-managed keys untouched", () => {
     const original = `{
   // keep this file exactly
   "mcp": { "my-notion": { "type": "remote" } },
   "plugin": ["user-plugin"]
 }
 `;
-    const path = await writeLegacyFile(root, "opencode.json", original);
-
-    const state = await sweepLegacyOpenCodeConfig(config, {
-      homeDir: root,
-      now: NOW,
-      productPolicy: UPSTREAM_POLICY,
+    expect(sweepLegacyConfigContent(original)).toEqual({
+      content: original,
+      removedKeys: [],
     });
-
-    expect(await readFile(path, "utf8")).toBe(original);
-    expect(await countBackups(root, "opencode.json")).toBe(0);
-    expect(state.files.find((entry) => entry.path === path)?.removedKeys).toEqual([]);
   });
 
-  test("records errors without throwing and aborts remaining edits", async () => {
+  test("cannot re-enable legacy import through a local runtime policy", async () => {
     const root = await createRoot();
     const config = configFor(root);
-    const safePath = await writeLegacyFile(root, "config.json", `{ "plugin": ["user-plugin"] }\n`);
-    const unwritablePath = await writeLegacyFile(root, "opencode.json", `{ "default_agent": "openwork" }\n`);
-    const remainingPath = await writeLegacyFile(root, "opencode.jsonc", `{ "default_agent": "openwork" }\n`);
-    await chmod(unwritablePath, 0o444);
+    const original = `{ "default_agent": "openwork" }\n`;
+    const path = await writeLegacyFile(root, "opencode.jsonc", original);
+    const attemptedBroadening = {
+      ...LOCAL_MVP_POLICY,
+      features: {
+        ...LOCAL_MVP_POLICY.features,
+        legacyOpenWorkImport: true,
+      },
+    } satisfies ServerProductPolicy;
 
     const state = await sweepLegacyOpenCodeConfig(config, {
       homeDir: root,
       now: NOW,
-      productPolicy: UPSTREAM_POLICY,
+      productPolicy: attemptedBroadening,
     });
 
-    expect(state.error).toBeTruthy();
-    expect(await readFile(safePath, "utf8")).toBe(`{ "plugin": ["user-plugin"] }\n`);
-    expect(await readFile(unwritablePath, "utf8")).toBe(`{ "default_agent": "openwork" }\n`);
-    expect(await readFile(remainingPath, "utf8")).toBe(`{ "default_agent": "openwork" }\n`);
-    expect((await readLegacyConfigSweepState(config))?.error).toBeTruthy();
+    expect(state.skipped).toBe("feature_disabled");
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(await readLegacyConfigSweepState(config)).toBeNull();
+  });
+
+  test("rejects an upstream runtime policy without touching local files", async () => {
+    const root = await createRoot();
+    const config = configFor(root);
+    const original = `{ "default_agent": "openwork" }\n`;
+    const path = await writeLegacyFile(root, "opencode.jsonc", original);
+
+    await expect(
+      sweepLegacyOpenCodeConfig(config, {
+        homeDir: root,
+        now: NOW,
+        productPolicy: UPSTREAM_POLICY,
+      }),
+    ).rejects.toThrow(
+      "Server product profile upstream cannot replace compiled profile local-mvp",
+    );
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(await readLegacyConfigSweepState(config)).toBeNull();
   });
 });

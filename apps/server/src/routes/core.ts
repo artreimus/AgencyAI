@@ -20,6 +20,11 @@ import {
   googleWorkspaceTestConnection,
 } from "../extensions/google-workspace.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
+import {
+  effectiveServerProductPolicy,
+  isLocalMvpProduct,
+} from "../product-policy.js";
+import { resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
 import type { TokenService } from "../tokens.js";
 import {
   TOY_UI_CSS,
@@ -56,7 +61,11 @@ interface RegisterCoreRoutesOptions {
   fetchRuntimeControl: FetchRuntimeControl;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  createWorkspaceOpencodeClient: (
+    config: ServerConfig,
+    workspace: WorkspaceInfo,
+    options?: { boundedDiagnosticsReads?: boolean },
+  ) => WorkspaceOpencodeClient;
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
   resolveToyUiEnabled: () => boolean;
@@ -97,6 +106,63 @@ function connectSnapshotOptionsFromBody(body: Record<string, unknown>): ConnectS
   };
 }
 
+function isLoopbackUrl(value: string | undefined): boolean {
+  if (!value?.trim()) return false;
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && !url.username
+      && !url.password
+      && (url.pathname === "" || url.pathname === "/")
+      && !url.search
+      && !url.hash
+      && (
+        hostname === "127.0.0.1"
+        || hostname === "localhost"
+        || hostname === "::1"
+        || hostname === "[::1]"
+      );
+  } catch {
+    return false;
+  }
+}
+
+const OPENCODE_READINESS_TIMEOUT_MS = 2_000;
+
+async function probeLocalOpencodeReadiness(
+  config: ServerConfig,
+  createWorkspaceOpencodeClient: RegisterCoreRoutesOptions["createWorkspaceOpencodeClient"],
+): Promise<{ loopback: boolean; healthy: boolean }> {
+  if (config.workspaces.length === 0) {
+    return { loopback: false, healthy: false };
+  }
+
+  const loopback = config.workspaces.every((workspace) =>
+    isLoopbackUrl(resolveWorkspaceOpencodeConnection(config, workspace).baseUrl)
+  );
+  if (!loopback) {
+    return { loopback: false, healthy: false };
+  }
+
+  const health = await Promise.all(config.workspaces.map(async (workspace) => {
+    try {
+      const result = await createWorkspaceOpencodeClient(
+        config,
+        workspace,
+        { boundedDiagnosticsReads: true },
+      ).global.health({
+        signal: AbortSignal.timeout(OPENCODE_READINESS_TIMEOUT_MS),
+      });
+      return result.response.ok && result.data?.healthy === true;
+    } catch {
+      return false;
+    }
+  }));
+
+  return { loopback: true, healthy: health.every(Boolean) };
+}
+
 export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   const {
     routes,
@@ -121,7 +187,16 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
   } = options;
-  const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
+  const productPolicy = effectiveServerProductPolicy(config.productPolicy);
+  const localMvp = isLocalMvpProduct(productPolicy);
+  const cloudEnabled = productPolicy.features.openworkCloud;
+  const connectEnabled = cloudEnabled && productPolicy.features.connectLinks;
+  const googleWorkspaceEnabled = productPolicy.features.googleWorkspace;
+  const voiceEnabled = productPolicy.features.voice;
+  const runtimeControlEnabled = !localMvp && productPolicy.features.runtimeDownloads;
+  const googleWorkspaceConnectFlows = googleWorkspaceEnabled
+    ? createGoogleWorkspaceConnectFlowManager(config)
+    : null;
   const envPendingChangesByRuntime = new Map<string, boolean>();
 
   const connectSnapshotBaseOptions = {
@@ -131,22 +206,58 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     serverMetadata: { serverVersion, expectedOpencodeVersion: opencodeVersion },
   };
 
-  const healthResponse = () => jsonResponse({
-    ok: true,
-    version: serverVersion,
-    opencodeVersion,
-    uptimeMs: Date.now() - config.startedAt,
-  });
+  const healthResponse = () => localMvp
+    ? jsonResponse({ ok: true })
+    : jsonResponse({
+        ok: true,
+        version: serverVersion,
+        opencodeVersion,
+        uptimeMs: Date.now() - config.startedAt,
+      });
 
   addRoute(routes, "GET", "/health", "none", async () => healthResponse());
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => healthResponse());
 
-  // Dev log sink: append browser console + error events to a file that an
-  // operator (or an AI driver) can tail. Unauth on purpose because this is
-  // scoped to the dev host and needs to work before clients finish wiring
-  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
-  addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
+  if (localMvp) {
+    addRoute(routes, "GET", "/ready", "client", async () => {
+      const openworkLoopback = config.host === "127.0.0.1"
+        || config.host === "localhost"
+        || config.host === "::1";
+      const opencode = await probeLocalOpencodeReadiness(
+        config,
+        createWorkspaceOpencodeClient,
+      );
+      const ready = openworkLoopback && opencode.loopback && opencode.healthy;
+      return jsonResponse({
+        ready,
+        productProfile: productPolicy.profile,
+        features: {
+          openworkCloud: productPolicy.features.openworkCloud,
+          analytics: productPolicy.features.analytics,
+          automaticUpdates: productPolicy.features.automaticUpdates,
+          runtimeDownloads: productPolicy.features.runtimeDownloads,
+        },
+        bindings: {
+          openwork: openworkLoopback ? "loopback" : "invalid",
+          opencode: opencode.loopback ? "loopback" : "unavailable",
+        },
+        opencode: {
+          version: opencodeVersion,
+          healthy: opencode.healthy,
+        },
+        modelCatalog: {
+          source: "opencode-embedded",
+        },
+      }, ready ? 200 : 503);
+    });
+  }
+
+  if (!localMvp) {
+    // Dev log sink: append browser console + error events to a file that an
+    // operator (or an AI driver) can tail. Local-mvp omits the unauthenticated
+    // file-writing surface entirely.
+    addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
     const target = resolveDevLogPath();
     if (!target) {
       return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
@@ -177,7 +288,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({ ok: true, count: entries.length });
   });
 
-  addRoute(routes, "GET", "/dev/log", "none", async () => {
+    addRoute(routes, "GET", "/dev/log", "none", async () => {
     // Probe response: always 200 so the client's capability probe doesn't
     // log a noisy "Failed to load resource: 404" in the browser console
     // when the sink is simply disabled. Clients should key on `ok` + `reason`
@@ -189,40 +300,41 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({ ok: true, path: target });
   });
 
-  addRoute(routes, "GET", "/ui", "none", async () => {
+    addRoute(routes, "GET", "/ui", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
     return htmlResponse(TOY_UI_HTML);
   });
 
-  addRoute(routes, "GET", "/w/:id/ui", "none", async () => {
+    addRoute(routes, "GET", "/w/:id/ui", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
     return htmlResponse(TOY_UI_HTML);
   });
 
-  addRoute(routes, "GET", "/ui/assets/toy.css", "none", async () => {
+    addRoute(routes, "GET", "/ui/assets/toy.css", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
     return cssResponse(TOY_UI_CSS);
   });
 
-  addRoute(routes, "GET", "/ui/assets/toy.js", "none", async () => {
+    addRoute(routes, "GET", "/ui/assets/toy.js", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
     return jsResponse(TOY_UI_JS);
   });
 
-  addRoute(routes, "GET", "/ui/assets/openwork-mark.svg", "none", async () => {
+    addRoute(routes, "GET", "/ui/assets/openwork-mark.svg", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
     return svgResponse(TOY_UI_FAVICON_SVG);
-  });
+    });
+  }
 
   addRoute(routes, "GET", "/w/:id/status", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -285,27 +397,29 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
-  addRoute(routes, "GET", "/runtime/versions", "client", async () => {
-    const snapshot = await fetchRuntimeControl("/runtime/versions");
-    return jsonResponse(snapshot);
-  });
+  if (runtimeControlEnabled) {
+    addRoute(routes, "GET", "/runtime/versions", "client", async () => {
+      const snapshot = await fetchRuntimeControl("/runtime/versions");
+      return jsonResponse(snapshot);
+    });
 
-  addRoute(routes, "POST", "/runtime/upgrade", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
-    return jsonResponse(result, 202);
-  });
+    addRoute(routes, "POST", "/runtime/upgrade", "host", async (ctx) => {
+      const body = await readJsonBody(ctx.request);
+      const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
+      return jsonResponse(result, 202);
+    });
 
-  addRoute(routes, "GET", "/w/:id/runtime/versions", "client", async () => {
-    const snapshot = await fetchRuntimeControl("/runtime/versions");
-    return jsonResponse(snapshot);
-  });
+    addRoute(routes, "GET", "/w/:id/runtime/versions", "client", async () => {
+      const snapshot = await fetchRuntimeControl("/runtime/versions");
+      return jsonResponse(snapshot);
+    });
 
-  addRoute(routes, "POST", "/w/:id/runtime/upgrade", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
-    return jsonResponse(result, 202);
-  });
+    addRoute(routes, "POST", "/w/:id/runtime/upgrade", "host", async (ctx) => {
+      const body = await readJsonBody(ctx.request);
+      const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
+      return jsonResponse(result, 202);
+    });
+  }
 
   addRoute(routes, "GET", "/whoami", "client", async (ctx) => {
     return jsonResponse({ ok: true, actor: ctx.actor ?? null });
@@ -315,42 +429,49 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse(buildCapabilities(config));
   });
 
-  addRoute(routes, "GET", "/experimental/connect/state", "client", async (ctx) => {
-    return jsonResponse({
-      ok: true,
-      schemaVersion: 1,
-      ...(await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) })),
+  if (connectEnabled) {
+    addRoute(routes, "GET", "/experimental/connect/state", "client", async (ctx) => {
+      return jsonResponse({
+        ok: true,
+        schemaVersion: 1,
+        ...(await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) })),
+      });
     });
-  });
 
-  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
-    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
-    const skills = await readOpenWorkConnectSkillCatalog(config);
-    return jsonResponse({
-      ok: true,
-      schemaVersion: 1,
-      skills,
-      instruction: renderOpenWorkConnectSkillInstruction(skills),
+    addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
+      const skills = await readOpenWorkConnectSkillCatalog(config);
+      return jsonResponse({
+        ok: true,
+        schemaVersion: 1,
+        skills,
+        instruction: renderOpenWorkConnectSkillInstruction(skills),
+      });
     });
-  });
 
-  addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {
-    ensureWritable(config);
-    const body = await readJsonBody(ctx.request);
-    if (typeof body.connectEnabled !== "boolean" || Object.keys(body).some((key) => key !== "connectEnabled")) {
-      throw new ApiError(400, "invalid_payload", "connectEnabled must be a boolean");
-    }
-    await writeConnectState(config, { connectEnabled: body.connectEnabled });
-    return jsonResponse({ ok: true, schemaVersion: 1, ...(await getConnectSnapshot(config, connectSnapshotBaseOptions)) });
-  });
+    addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {
+      ensureWritable(config);
+      const body = await readJsonBody(ctx.request);
+      if (typeof body.connectEnabled !== "boolean" || Object.keys(body).some((key) => key !== "connectEnabled")) {
+        throw new ApiError(400, "invalid_payload", "connectEnabled must be a boolean");
+      }
+      await writeConnectState(config, { connectEnabled: body.connectEnabled });
+      return jsonResponse({ ok: true, schemaVersion: 1, ...(await getConnectSnapshot(config, connectSnapshotBaseOptions)) });
+    });
+  }
 
   addRoute(routes, "GET", "/experimental/extensions/actions", "client", async (ctx) => {
     const extensionId = ctx.url.searchParams.get("extensionId") ?? "";
-    const connectSnapshot = await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) });
+    const connectSnapshot = connectEnabled
+      ? await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) })
+      : undefined;
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
-      actions: listExperimentalExtensionActions(extensionId, connectSnapshot),
+      actions: listExperimentalExtensionActions(
+        extensionId,
+        connectSnapshot,
+        { googleWorkspace: googleWorkspaceEnabled },
+      ),
     });
   });
 
@@ -359,10 +480,20 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) })));
+    const connectSnapshot = connectEnabled
+      ? await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) })
+      : undefined;
+    return jsonResponse(await callExperimentalExtensionAction(
+      config,
+      env,
+      body,
+      connectSnapshot,
+      { googleWorkspace: googleWorkspaceEnabled },
+    ));
   });
 
-  addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async (ctx) => {
+  if (googleWorkspaceEnabled && googleWorkspaceConnectFlows) {
+    addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async (ctx) => {
     const connectSnapshot = await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) });
     return jsonResponse(await googleWorkspaceStatus(config, googleWorkspaceStatusConnectExtra(connectSnapshot)));
   });
@@ -398,9 +529,10 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse(await googleWorkspaceTestConnection(config));
   });
 
-  addRoute(routes, "POST", "/experimental/google-workspace/smoke-test", "client", async () => {
-    return jsonResponse(await googleWorkspaceRunScopeSmokeTest(config));
-  });
+    addRoute(routes, "POST", "/experimental/google-workspace/smoke-test", "client", async () => {
+      return jsonResponse(await googleWorkspaceRunScopeSmokeTest(config));
+    });
+  }
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
@@ -565,8 +697,10 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({ ok: true });
   });
 
-  addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
-  });
+  if (voiceEnabled) {
+    addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
+      const body = await readJsonBody(ctx.request);
+      return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
+    });
+  }
 }

@@ -6,8 +6,12 @@
  * of owning the process lifecycle.
  */
 import { mkdir } from "node:fs/promises";
-import { isProductFeatureEnabled } from "@openwork/product-config";
 import { resolveServerConfig, type CliArgs } from "./config.js";
+import {
+  DesktopApprovalCredentialService,
+  type DesktopApprovalGrant,
+  type TrustedDesktopOperation,
+} from "./desktop-approval-credentials.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import {
   clearTrustedOpencodeProcess,
@@ -26,6 +30,10 @@ import {
 } from "./storage-layout-env.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
+import {
+  isLocalMvpProduct,
+  serverFeatureEnabled,
+} from "./product-policy.js";
 
 export type EmbeddedServerOptions = CliArgs & {
   /** When true, spawn a managed OpenCode child process. */
@@ -49,6 +57,15 @@ export type EmbeddedServerHandle = {
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
   /** Exact path-only environment validated by this embedded server. */
   storage: LocalStorageLayoutAttestation | null;
+  /** Issue a one-request grant after Electron validates its renderer. */
+  issueDesktopApprovalGrant?: (input: {
+    bearerToken: string;
+    webContentsId: number;
+    workspaceId: string;
+    operation: TrustedDesktopOperation;
+  }) => DesktopApprovalGrant;
+  revokeDesktopApprovalGrantsForWebContents?: (webContentsId: number) => number;
+  revokeAllDesktopApprovalGrants?: () => number;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -56,6 +73,13 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const storage = assertLocalStorageLayoutEnvironment();
   const config = await resolveServerConfig(options);
+  const localMvp = isLocalMvpProduct(config.productPolicy);
+  const desktopApprovalCredentials = localMvp
+    ? new DesktopApprovalCredentialService()
+    : null;
+  if (desktopApprovalCredentials) {
+    config.desktopApprovalCredentials = desktopApprovalCredentials;
+  }
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
@@ -78,15 +102,18 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
       await mkdir(cwd, { recursive: true });
-      if (isProductFeatureEnabled("legacyOpenWorkImport")) {
+      if (serverFeatureEnabled("legacyOpenWorkImport", config.productPolicy)) {
         await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
       }
-      const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+      const opencodeModelsUrl = localMvp
+        ? null
+        : await resolveOpencodeModelsUrl();
 
       managedOpencode = await createManagedOpencodeServer({
         bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
         cwd,
         excludedPorts: [config.port],
+        corsOrigins: config.corsOrigins,
         env: {
           // Passing the validated path contract explicitly makes the actual
           // child spawn environment observable in its redacted execution
@@ -97,7 +124,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
           OPENWORK_SERVER_URL: serverUrl,
           OPENWORK_SERVER_TOKEN: config.token,
           OPENCODE_CONFIG: runtimeConfigPath,
-          OPENCODE_MODELS_URL: opencodeModelsUrl,
+          ...(opencodeModelsUrl ? { OPENCODE_MODELS_URL: opencodeModelsUrl } : {}),
         },
       });
 
@@ -131,6 +158,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   }
 
   const server = await startServer(config);
+  const boundServerOrigin = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 
   // The runtime config file above only covers workspaces[0]. Push every
   // workspace's runtime-DB MCPs into the engine so they aren't invisible
@@ -141,14 +169,39 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   return {
     port: server.port,
-    url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
+    url: boundServerOrigin,
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
     managedOpencode: managedOpencode
       ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
       : null,
     storage,
+    ...(desktopApprovalCredentials
+      ? {
+          issueDesktopApprovalGrant(input) {
+            const workspace = config.workspaces.find(
+              (entry) => entry.id === input.workspaceId
+                && entry.workspaceType === "local",
+            );
+            if (!workspace) {
+              throw new Error("Desktop approval workspace is not an active local workspace");
+            }
+            return desktopApprovalCredentials.issue({
+              ...input,
+              rendererOrigin: config.corsOrigins[0] ?? "",
+              serverOrigin: boundServerOrigin,
+            });
+          },
+          revokeDesktopApprovalGrantsForWebContents(webContentsId: number) {
+            return desktopApprovalCredentials.revokeForWebContents(webContentsId);
+          },
+          revokeAllDesktopApprovalGrants() {
+            return desktopApprovalCredentials.revokeAll();
+          },
+        }
+      : {}),
     async stop() {
+      desktopApprovalCredentials?.revokeAll();
       if (managedOpencodeIdentity) {
         clearTrustedOpencodeProcess(config, managedOpencodeIdentity);
       }

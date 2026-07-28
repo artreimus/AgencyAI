@@ -195,6 +195,37 @@ test("scans staged output paths, content, and symlink targets", async () => {
   ));
 });
 
+test("staged JavaScript ignores minified division identifiers but still scans string paths", async () => {
+  const root = await createFixture({ "src/index.mjs": "export {};\n" });
+  const staged = await mkdtemp(path.join(tmpdir(), "agencyai-staged-"));
+  await writeFixtureFile(
+    staged,
+    "assets/minified.js",
+    [
+      "const image = `generated",
+      String.fromCharCode(96) + ",",
+      `const ${restrictedSegment}=4;const value=1+${restrictedSegment}/2;`,
+      "",
+    ].join("\n"),
+  );
+  await writeFixtureFile(
+    staged,
+    "assets/copied.js",
+    `export const copied = "${restrictedSegment}/packages/shared";\n`,
+  );
+
+  const findings = await scanSourceClosure({ root, stagedDirectories: [staged] });
+  assert.equal(
+    findings.some((item) => item.file === "@staged/0/assets/minified.js"),
+    false,
+  );
+  assert.ok(findings.some(
+    (item) =>
+      item.code === "EE_STAGED_CONTENT" &&
+      item.file === "@staged/0/assets/copied.js",
+  ));
+});
+
 test("rejects direct, split, workflow, and archive acquisition of upstream source", async () => {
   const owner = upstreamSlug.split("/")[0];
   const repository = upstreamSlug.split("/")[1];

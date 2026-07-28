@@ -19,6 +19,7 @@ import {
   type EngineMcpDescriptor,
 } from "./openwork-provider-adapters.js";
 import { uiControlDiscoveryPaths } from "./ui-control-discovery.js";
+import { isOpenworkCloudMcpName } from "../mcp-product-policy.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -146,6 +147,25 @@ const OPENWORK_BROWSER_INSTRUCTION =
 For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
 Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
 
+const AGENCYAI_AGENT_SURFACE_INSTRUCTION =
+  `## AgencyAI app context
+Use openwork_context when the request depends on the current AgencyAI screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
+Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is AgencyAI. Use openwork_execute for AgencyAI commands without activating the desktop window. If an executor names another tool, call that exact tool instead.
+Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
+To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the AgencyAI app itself.`;
+
+const AGENCYAI_BROWSER_INSTRUCTION =
+  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the AgencyAI app itself. Those are for browsing external websites.
+
+## Built-in Browser (external websites)
+For web browsing tasks, start with openwork_execute id browser.open_url. It creates or selects a built-in AgencyAI browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot calls.
+Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the AgencyAI app target.`;
+
+const AGENCYAI_LOCAL_EXTENSION_DISCOVERY_INSTRUCTION =
+  "If the user asks for something you cannot do with obvious built-in tools, check AgencyAI local extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect enabled local actions, then openwork_execute with id extension.call for the matching action.";
+
+const AGENCYAI_LOCAL_FACTORY_MARKER = "__agencyAiLocalProduct";
+
 // ── UI control bridge discovery ──
 
 type UiBridge = { baseUrl: string; token: string };
@@ -271,16 +291,65 @@ const SESSION_SEARCH_CONCURRENCY = 6;
 const SESSION_SNIPPET_BEFORE = 36;
 const SESSION_SNIPPET_AFTER = 72;
 
-async function discoverUiBridge(): Promise<UiBridge | null> {
-  if (cachedBridge && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
-  for (const candidate of uiControlDiscoveryPaths()) {
+function requireLocalLoopbackOrigin(value: string, label: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a valid loopback HTTP origin`);
+  }
+  const loopback = url.hostname === "127.0.0.1"
+    || url.hostname === "::1"
+    || url.hostname === "[::1]";
+  if (
+    url.protocol !== "http:"
+    || !loopback
+    || url.username
+    || url.password
+    || url.pathname !== "/"
+    || url.search
+    || url.hash
+  ) {
+    throw new Error(`${label} must be an exact loopback HTTP origin`);
+  }
+  return url.origin;
+}
+
+function localRequestUrl(
+  baseUrl: string,
+  path: string,
+  localMvp: boolean,
+  label: string,
+): string {
+  if (!localMvp) return `${baseUrl}${path}`;
+  return new URL(path, requireLocalLoopbackOrigin(baseUrl, label)).toString();
+}
+
+async function discoverUiBridge(localMvp = false): Promise<UiBridge | null> {
+  if (
+    !localMvp
+    && cachedBridge
+    && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS
+  ) {
+    return cachedBridge;
+  }
+  for (const candidate of uiControlDiscoveryPaths({ localOnly: localMvp })) {
     try {
       const raw = await readFile(candidate, "utf8");
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
-        cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token };
-        cachedBridgeAt = Date.now();
-        return cachedBridge;
+        const baseUrl = localMvp
+          ? requireLocalLoopbackOrigin(
+              parsed.baseUrl,
+              "AgencyAI UI bridge URL",
+            )
+          : parsed.baseUrl;
+        const bridge = { baseUrl, token: parsed.token };
+        if (!localMvp) {
+          cachedBridge = bridge;
+          cachedBridgeAt = Date.now();
+        }
+        return bridge;
       }
     } catch {
       // Try next
@@ -289,19 +358,32 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
   return null;
 }
 
-async function uiBridgeRequest(path: string, options: { method?: string; body?: unknown } = {}): Promise<unknown> {
-  const bridge = await discoverUiBridge();
+async function uiBridgeRequest(
+  path: string,
+  options: { method?: string; body?: unknown } = {},
+  localMvp = false,
+): Promise<unknown> {
+  const bridge = await discoverUiBridge(localMvp);
   if (!bridge) return { ok: false, error: "OpenWork UI bridge not available. The desktop app may not be running." };
   try {
-    const response = await fetch(`${bridge.baseUrl}${path}`, {
+    const response = await fetch(
+      localRequestUrl(
+        bridge.baseUrl,
+        path,
+        localMvp,
+        "AgencyAI UI bridge URL",
+      ),
+      {
       method: options.method || "GET",
+      ...(localMvp ? { redirect: "error" as const } : {}),
       signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${bridge.token}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),
       },
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-    });
+      },
+    );
     const text = await response.text();
     try { return JSON.parse(text); } catch { return { ok: false, error: text || `HTTP ${response.status}` }; }
   } catch (error) {
@@ -311,11 +393,15 @@ async function uiBridgeRequest(path: string, options: { method?: string; body?: 
   }
 }
 
-async function serverGet(path: string): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
-  const response = await fetch(`${url}${path}`, {
+async function serverGet(path: string, localMvp = false): Promise<unknown> {
+  const { url, token } = requireOpenWorkServer(localMvp);
+  const response = await fetch(
+    localRequestUrl(url, path, localMvp, "AgencyAI server URL"),
+    {
+    ...(localMvp ? { redirect: "error" as const } : {}),
     headers: { Authorization: `Bearer ${token}` },
-  });
+    },
+  );
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
   return payload;
@@ -355,13 +441,20 @@ async function readEngineMcpDescriptors(
 async function readOpenworkAgentContext(
   engineMcpStatusClient: OpenWorkEngineMcpStatusClient | undefined,
   engineMcpStatusDirectory: string | undefined,
+  localMvp = false,
 ): Promise<Record<string, unknown>> {
   const [uiResult, skills, mcps] = await Promise.all([
-    uiBridgeRequest("/context"),
-    readConnectSkillDescriptors(),
+    uiBridgeRequest("/context", {}, localMvp),
+    localMvp ? Promise.resolve([]) : readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
-  const contributions = buildOpenworkProviderContributions(skills, mcps);
+  const effectiveMcps = localMvp
+    ? mcps.filter((mcp) => !isOpenworkCloudMcpName(mcp.name))
+    : mcps;
+  const contributions = buildOpenworkProviderContributions(
+    skills,
+    effectiveMcps,
+  );
   const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
@@ -386,19 +479,22 @@ async function readOpenworkAgentContext(
   };
 }
 
-async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
+async function queryOpenworkAffordance(
+  rawArgs: unknown,
+  localMvp = false,
+): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.search") {
     return affordanceResult(
       request.id,
-      await searchOpenWorkSessions(request.args ?? {}),
+      await searchOpenWorkSessions(request.args ?? {}, localMvp),
       affordanceReadEffects,
     );
   }
   if (request.id === "session.read") {
     return affordanceResult(
       request.id,
-      await readOpenWorkSession(request.args ?? {}),
+      await readOpenWorkSession(request.args ?? {}, localMvp),
       affordanceReadEffects,
     );
   }
@@ -407,7 +503,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
     const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
     return affordanceResult(
       request.id,
-      await serverGet(`/experimental/extensions/actions${query}`),
+      await serverGet(`/experimental/extensions/actions${query}`, localMvp),
       affordanceReadEffects,
     );
   }
@@ -420,7 +516,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
   const result = await uiBridgeRequest("/query", {
     method: "POST",
     body: request,
-  });
+  }, localMvp);
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI query returned an invalid response.");
@@ -429,12 +525,13 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
 async function executeOpenworkAffordance(
   rawArgs: unknown,
   context: OpenCodeContext,
+  localMvp = false,
 ): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.create") {
     return affordanceResult(
       request.id,
-      await createOpenWorkSessions(request.args ?? {}, context),
+      await createOpenWorkSessions(request.args ?? {}, context, localMvp),
       affordanceWriteEffects,
     );
   }
@@ -447,7 +544,7 @@ async function executeOpenworkAffordance(
         action: args.action,
         args: args.args ?? {},
         context: contextPayload(context),
-      }),
+      }, localMvp),
       affordanceExternalWriteEffects,
     );
   }
@@ -460,7 +557,7 @@ async function executeOpenworkAffordance(
   const result = await uiBridgeRequest("/command", {
     method: "POST",
     body: request,
-  });
+  }, localMvp);
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
@@ -565,8 +662,12 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
   return fallback;
 }
 
-async function listOpenWorkWorkspaces(): Promise<OpenWorkWorkspace[]> {
-  return workspaceListEnvelopeSchema.parse(await serverGet("/workspaces")).items;
+async function listOpenWorkWorkspaces(
+  localMvp = false,
+): Promise<OpenWorkWorkspace[]> {
+  return workspaceListEnvelopeSchema.parse(
+    await serverGet("/workspaces", localMvp),
+  ).items;
 }
 
 function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string): OpenWorkWorkspace[] {
@@ -580,23 +681,45 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
   });
 }
 
-async function listWorkspaceSessions(workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
+async function listWorkspaceSessions(
+  workspace: OpenWorkWorkspace,
+  limit: number,
+  localMvp = false,
+): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ roots: "true", limit: String(limit) });
   return sessionListEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`),
+    await serverGet(
+      `/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`,
+      localMvp,
+    ),
   ).items;
 }
 
-async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionInfo> {
+async function readWorkspaceSession(
+  workspace: OpenWorkWorkspace,
+  sessionId: string,
+  localMvp = false,
+): Promise<SessionInfo> {
   return sessionEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`),
+    await serverGet(
+      `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`,
+      localMvp,
+    ),
   ).item;
 }
 
-async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
+async function readSessionMessages(
+  workspace: OpenWorkWorkspace,
+  sessionId: string,
+  limit: number,
+  localMvp = false,
+): Promise<SessionMessage[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   return sessionMessagesEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`),
+    await serverGet(
+      `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`,
+      localMvp,
+    ),
   ).items;
 }
 
@@ -612,13 +735,19 @@ async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (
   await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, () => worker()));
 }
 
-async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
+async function searchOpenWorkSessions(
+  rawArgs: unknown,
+  localMvp = false,
+): Promise<object> {
   const args = sessionSearchArgsSchema.parse(rawArgs);
   const resultLimit = args.limit ?? SESSION_SEARCH_DEFAULT_LIMIT;
   const scanLimit = args.scanLimit ?? SESSION_SEARCH_DEFAULT_SCAN_LIMIT;
   const messageLimit = args.messageLimit ?? SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT;
   const queryLower = args.query.trim().toLowerCase();
-  const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), args.workspaceId);
+  const workspaces = filterWorkspaces(
+    await listOpenWorkWorkspaces(localMvp),
+    args.workspaceId,
+  );
   if (!workspaces.length) {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
@@ -627,7 +756,11 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   const workspaceErrors: Array<{ workspaceId: string; workspace: string; error: string }> = [];
   await Promise.all(workspaces.map(async (workspace) => {
     try {
-      const items = await listWorkspaceSessions(workspace, scanLimit);
+      const items = await listWorkspaceSessions(
+        workspace,
+        scanLimit,
+        localMvp,
+      );
       for (const session of items) sessions.push({ workspace, session });
     } catch (error) {
       workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
@@ -642,7 +775,12 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
     const titleMatch = titleSearchResult(workspace, session, queryLower);
     try {
-      const messages = await readSessionMessages(workspace, session.id, messageLimit);
+      const messages = await readSessionMessages(
+        workspace,
+        session.id,
+        messageLimit,
+        localMvp,
+      );
       const messageMatch = messageSearchResult(workspace, session, messages, queryLower);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
@@ -670,18 +808,33 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   };
 }
 
-async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
+async function readOpenWorkSession(
+  rawArgs: unknown,
+  localMvp = false,
+): Promise<object> {
   const args = sessionReadArgsSchema.parse(rawArgs);
   const count = args.count ?? 30;
-  const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), args.workspaceId);
+  const workspaces = filterWorkspaces(
+    await listOpenWorkWorkspaces(localMvp),
+    args.workspaceId,
+  );
   if (!workspaces.length) {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
   for (const workspace of workspaces) {
     try {
-      const session = await readWorkspaceSession(workspace, args.sessionId);
-      const messages = await readSessionMessages(workspace, args.sessionId, count);
+      const session = await readWorkspaceSession(
+        workspace,
+        args.sessionId,
+        localMvp,
+      );
+      const messages = await readSessionMessages(
+        workspace,
+        args.sessionId,
+        count,
+        localMvp,
+      );
       const readable = messages
         .map((message, index) => ({
           index,
@@ -717,12 +870,17 @@ function serverToken(): string {
   return String(process.env.OPENWORK_SERVER_TOKEN || "");
 }
 
-function requireOpenWorkServer(): { url: string; token: string } {
-  const url = serverUrl();
+function requireOpenWorkServer(
+  localMvp = false,
+): { url: string; token: string } {
+  const rawUrl = serverUrl();
   const token = serverToken();
-  if (!url || !token) {
+  if (!rawUrl || !token) {
     throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
   }
+  const url = localMvp
+    ? requireLocalLoopbackOrigin(rawUrl, "AgencyAI server URL")
+    : rawUrl;
   return { url, token };
 }
 
@@ -755,8 +913,12 @@ function normalizeDirPath(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
-async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext): Promise<OpenWorkWorkspace> {
-  const workspaces = await listOpenWorkWorkspaces();
+async function resolveContextWorkspace(
+  workspaceId: string | undefined,
+  context: OpenCodeContext,
+  localMvp = false,
+): Promise<OpenWorkWorkspace> {
+  const workspaces = await listOpenWorkWorkspaces(localMvp);
   if (!workspaces.length) throw new Error("No OpenWork workspaces are available");
   if (workspaceId) {
     const match = filterWorkspaces(workspaces, workspaceId).at(0);
@@ -782,14 +944,23 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
-async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+async function createOpenWorkSessions(
+  rawArgs: unknown,
+  context: OpenCodeContext,
+  localMvp = false,
+): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
-  const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  const workspace = await resolveContextWorkspace(
+    args.workspaceId,
+    context,
+    localMvp,
+  );
   const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
     try {
       const payload = createdSessionEnvelopeSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
         session,
+        localMvp,
       ));
       return {
         ok: true,
@@ -817,16 +988,24 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
-  const response = await fetch(url + path, {
+async function postJson(
+  path: string,
+  body: ExtensionActionPayload | Record<string, unknown>,
+  localMvp = false,
+): Promise<unknown> {
+  const { url, token } = requireOpenWorkServer(localMvp);
+  const response = await fetch(
+    localRequestUrl(url, path, localMvp, "AgencyAI server URL"),
+    {
     method: "POST",
+    ...(localMvp ? { redirect: "error" as const } : {}),
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
+    },
+  );
   const payload = await parseResponse(response);
   if (!response.ok) {
     throw new Error(errorMessage(payload, "OpenWork extension call failed"));
@@ -846,19 +1025,23 @@ function contextPayload(context: OpenCodeContext) {
 }
 
 export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
+  const localMvp = isRecord(factoryInput)
+    && factoryInput[AGENCYAI_LOCAL_FACTORY_MARKER] === true;
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionInstruction, skillInstruction] = await Promise.all([
-      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
-        client: engineMcpStatusClient,
-        directory: engineMcpStatusDirectory,
-      }),
-      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
-    ]);
+    const [extensionInstruction, skillInstruction] = localMvp
+      ? [AGENCYAI_LOCAL_EXTENSION_DISCOVERY_INSTRUCTION, ""]
+      : await Promise.all([
+          resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+            client: engineMcpStatusClient,
+            directory: engineMcpStatusDirectory,
+          }),
+          resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
+        ]);
     const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
     if (process.env.OPENWORK_DEV_MODE === "1") {
       console.log("[openwork:skill-authoring] system prompt selected", {
@@ -871,38 +1054,68 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     // remote skills, session, and browser guidance never overlap by accident.
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionInstruction),
-      createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection(
+        "agent-surface",
+        localMvp
+          ? AGENCYAI_AGENT_SURFACE_INSTRUCTION
+          : OPENWORK_AGENT_SURFACE_INSTRUCTION,
+      ),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
-      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
+      createInstructionSection(
+        "browser",
+        localMvp ? AGENCYAI_BROWSER_INSTRUCTION : OPENWORK_BROWSER_INSTRUCTION,
+      ),
     );
     output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
     openwork_context: {
-      description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
+      description: localMvp
+        ? "Read one semantic snapshot of AgencyAI: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, local provider contributions, and available affordances with explicit effects and executors."
+        : "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
       async execute() {
         return JSON.stringify(
-          await readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          await readOpenworkAgentContext(
+            engineMcpStatusClient,
+            engineMcpStatusDirectory,
+            localMvp,
+          ),
           null,
           2,
         );
       },
     },
     openwork_query: {
-      description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
+      description: localMvp
+        ? "Run a side-effect-free AgencyAI affordance whose executor is AgencyAI. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus."
+        : "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
       args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
+        return JSON.stringify(
+          await queryOpenworkAffordance(rawArgs, localMvp),
+          null,
+          2,
+        );
       },
     },
     openwork_execute: {
-      description: "Execute an OpenWork command whose executor is OpenWork without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
+      description: localMvp
+        ? "Execute an AgencyAI command whose executor is AgencyAI without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead."
+        : "Execute an OpenWork command whose executor is OpenWork without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
       args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
-        return JSON.stringify(await executeOpenworkAffordance(rawArgs, mergedContext), null, 2);
+        return JSON.stringify(
+          await executeOpenworkAffordance(
+            rawArgs,
+            mergedContext,
+            localMvp,
+          ),
+          null,
+          2,
+        );
       },
     },
   },

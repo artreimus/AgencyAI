@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
+import { serverFeatureEnabled } from "../product-policy.js";
 import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
@@ -208,14 +209,28 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
   };
 }
 
-async function persistServerWorkspaceState(config: ServerConfig): Promise<boolean> {
+export async function persistServerWorkspaceState(config: ServerConfig): Promise<boolean> {
   const configPath = config.configPath?.trim() ?? "";
   if (!configPath) return false;
 
   const parsed = await readServerConfigFile(configPath);
+  const quarantinedLocalConfigs = new Map(
+    (config.quarantinedLocalOpencodeWorkspaceConfigs ?? []).map(
+      (entry) => [entry.workspaceId, entry.config],
+    ),
+  );
   const next = {
     ...parsed,
-    workspaces: config.workspaces.map(serializeWorkspaceConfigEntry),
+    workspaces: [
+      ...config.workspaces.map((workspace) => ({
+        ...(quarantinedLocalConfigs.get(workspace.id) ?? {}),
+        ...serializeWorkspaceConfigEntry(workspace),
+      })),
+      ...(config.quarantinedRemoteWorkspaceConfigs
+        ?? (config.quarantinedRemoteWorkspaces ?? []).map(
+          serializeWorkspaceConfigEntry,
+        )),
+    ],
     authorizedRoots: Array.from(new Set(config.authorizedRoots.map((root) => resolve(root)))),
   };
 
@@ -248,6 +263,10 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     serializeWorkspace,
     reloadOpencodeEngine,
   } = options;
+  const remoteWorkspacesEnabled = serverFeatureEnabled(
+    "remoteWorkspaces",
+    config.productPolicy,
+  );
 
   const resolveWorkspaceForRegistry = async (id: string): Promise<WorkspaceInfo> => {
     const workspaceId = id.trim();
@@ -256,6 +275,13 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       config.workspaces.find((entry) => entry.id === workspaceId) ??
       (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
     if (!workspace) {
+      const quarantined = (config.quarantinedRemoteWorkspaces ?? []).some(
+        (entry) => entry.id === workspaceId
+          || (aliasWorkspaceId.length > 0 && entry.id === aliasWorkspaceId),
+      );
+      if (quarantined) {
+        throw new ApiError(404, "feature_disabled", "Remote workspaces are disabled");
+      }
       throw new ApiError(404, "workspace_not_found", "Workspace not found");
     }
     if (workspace.workspaceType === "remote") {
@@ -321,7 +347,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     }, 201);
   });
 
-  addRoute(routes, "POST", "/workspaces/remote", "host", async (ctx) => {
+  if (remoteWorkspacesEnabled) {
+    addRoute(routes, "POST", "/workspaces/remote", "host", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
     const baseUrl = readStringField(body, "baseUrl");
@@ -411,7 +438,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       workspaces: config.workspaces.map(serializeWorkspace),
       persisted,
     }, 201);
-  });
+    });
+  }
 
   addRoute(routes, "PATCH", "/workspaces/:id/display-name", "host", async (ctx) => {
     ensureWritable(config);

@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { mkdir } from "node:fs/promises";
-import { isProductFeatureEnabled } from "@openwork/product-config";
 
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
@@ -19,6 +18,7 @@ import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { startWorkerActivityHeartbeat } from "./worker-activity-heartbeat.js";
 import { assertLocalStorageLayoutEnvironment } from "./storage-layout-env.js";
+import { isLocalMvpProduct, serverFeatureEnabled } from "./product-policy.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -54,21 +54,24 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
-    if (isProductFeatureEnabled("legacyOpenWorkImport")) {
+    if (serverFeatureEnabled("legacyOpenWorkImport", config.productPolicy)) {
       await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
     }
-    const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    const opencodeModelsUrl = isLocalMvpProduct(config.productPolicy)
+      ? null
+      : await resolveOpencodeModelsUrl();
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,
       cwd: managedOpencodeCwd,
       excludedPorts: [config.port],
+      corsOrigins: config.corsOrigins,
       env: {
         ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
         ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
         OPENWORK_SERVER_URL: serverUrl,
         OPENWORK_SERVER_TOKEN: config.token,
         OPENCODE_CONFIG: runtimeConfigPath,
-        OPENCODE_MODELS_URL: opencodeModelsUrl,
+        ...(opencodeModelsUrl ? { OPENCODE_MODELS_URL: opencodeModelsUrl } : {}),
       },
     });
     config.opencodeBaseUrl = managedOpencode.url;
@@ -95,7 +98,9 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
 }
 
 const server = await startServer(config);
-const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger);
+const workerActivityHeartbeat = serverFeatureEnabled("openworkCloud", config.productPolicy)
+  ? startWorkerActivityHeartbeat(config, logger)
+  : null;
 
 // The runtime config file above only covers workspaces[0]. Push every
 // workspace's runtime-DB MCPs into the engine so they aren't invisible

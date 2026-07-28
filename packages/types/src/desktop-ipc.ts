@@ -84,6 +84,42 @@ export type OpenworkServerInfo = {
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
 };
 
+export type DesktopApprovalOperation =
+  | "config.runtime_migrate"
+  | "config.patch"
+  | "config.write"
+  | "skills.upsert"
+  | "skills.delete"
+  | "mcp.add"
+  | "mcp.remove"
+  | "mcp.enable"
+  | "mcp.disable"
+  | "commands.upsert"
+  | "commands.delete"
+  | "config.import"
+  | "workspace.inbox.upload"
+  | "workspace.files.session.ops"
+  | "workspace.file.write";
+
+/**
+ * The Electron main process supplies webContentsId from the validated IPC
+ * sender. It is intentionally not accepted from the renderer payload.
+ */
+export type DesktopApprovalGrantRequest = {
+  workspaceId: string;
+  operation: DesktopApprovalOperation;
+};
+
+export type DesktopApprovalGrant = {
+  credential: string;
+  credentialId: string;
+  serverOrigin: string;
+  workspaceId: string;
+  operation: DesktopApprovalOperation;
+  issuedAt: number;
+  expiresAt: number;
+};
+
 export type EngineDoctorResult = {
   found: boolean;
   inPath: boolean;
@@ -322,10 +358,46 @@ export type NukeReceipt = {
   workerScheduled: boolean;
 };
 
+export type DesktopFetchBinaryBodyEnvelope = {
+  kind: "binary";
+  bytes: Uint8Array;
+  contentType?: string;
+};
+
+export type DesktopFetchMultipartField = {
+  kind: "field";
+  name: string;
+  value: string;
+};
+
+export type DesktopFetchMultipartFile = {
+  kind: "file";
+  name: string;
+  fileName: string;
+  contentType?: string;
+  bytes: Uint8Array;
+};
+
+export type DesktopFetchMultipartBodyEnvelope = {
+  kind: "multipart";
+  parts: Array<DesktopFetchMultipartField | DesktopFetchMultipartFile>;
+};
+
+export type DesktopFetchBodyEnvelope =
+  | DesktopFetchBinaryBodyEnvelope
+  | DesktopFetchMultipartBodyEnvelope;
+
 export type DesktopFetchInit = {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  bodyEnvelope?: DesktopFetchBodyEnvelope;
+  /**
+   * A short-lived, one-request credential. Electron main validates the live
+   * renderer and local runtime, then injects the private approval header.
+   * Callers must never place that header in `headers`.
+   */
+  desktopApprovalCredential?: string;
   timeoutMs?: number;
   agentContextDiagnostics?: {
     deadlineAtMs: number;
@@ -501,6 +573,10 @@ export type DesktopCommandMap = {
   openworkServerRestart: {
     args: [options?: Record<string, unknown>];
     result: OpenworkServerInfo;
+  };
+  desktopApprovalGrant: {
+    args: [input: DesktopApprovalGrantRequest];
+    result: DesktopApprovalGrant;
   };
 
   // Dialogs

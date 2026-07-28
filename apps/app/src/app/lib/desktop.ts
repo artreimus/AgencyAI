@@ -2,6 +2,11 @@ import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
 export type * from "./desktop-types";
 export type {
+  DesktopApprovalGrant,
+  DesktopApprovalGrantRequest,
+  DesktopApprovalOperation,
+} from "@openwork/types/desktop-ipc";
+export type {
   EngineInfo,
   OpenworkServerInfo,
   EngineDoctorResult,
@@ -45,6 +50,7 @@ import type {
   NukeReceipt,
   WorkspaceList,
 } from "./desktop-types";
+import type { DesktopFetchBodyEnvelope } from "@openwork/types/desktop-ipc";
 import type { BrowserPanelTab } from "./desktop-types";
 
 export type BrowserStatePayload = {
@@ -274,8 +280,13 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
   }
 }
 
-type DesktopFetchMainOptions = {
+export type DesktopFetchViaMainOptions = {
   timeoutMs?: number;
+  bodyEnvelope?: DesktopFetchBodyEnvelope;
+  desktopApprovalCredential?: string;
+};
+
+type DesktopFetchMainOptions = DesktopFetchViaMainOptions & {
   agentContextDiagnosticsDeadlineAtMs?: number;
 };
 
@@ -317,6 +328,8 @@ async function desktopFetchThroughMain(
     method,
     headers,
     body,
+    bodyEnvelope: options.bodyEnvelope,
+    desktopApprovalCredential: options.desktopApprovalCredential,
     timeoutMs: options.timeoutMs,
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
@@ -342,8 +355,15 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
-  return desktopFetchThroughMain(input, init, { timeoutMs });
+export async function desktopFetchViaMain(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutOrOptions?: number | DesktopFetchViaMainOptions,
+): Promise<Response> {
+  const options = typeof timeoutOrOptions === "number"
+    ? { timeoutMs: timeoutOrOptions }
+    : timeoutOrOptions;
+  return desktopFetchThroughMain(input, init, options);
 }
 
 export async function desktopFetchAgentContextDiagnostics(
@@ -516,6 +536,7 @@ const {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  desktopApprovalGrant,
   runtimeBootstrap,
   engineInfo,
   engineDoctor,
@@ -575,6 +596,7 @@ export {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  desktopApprovalGrant,
   runtimeBootstrap,
   engineInfo,
   engineDoctor,

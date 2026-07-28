@@ -5,12 +5,21 @@ import {
   type AgentContextDiagnosticsReport,
   type AgentContextDiagnosticsRequest,
 } from "@openwork/types/agent-context-diagnostics";
+import type { DesktopFetchMultipartBodyEnvelope } from "@openwork/types/desktop-ipc";
 import { normalizeBaseUrl } from "@openwork/types/url";
 import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
+import {
+  desktopApprovalGrant,
+  desktopFetch,
+  desktopFetchAgentContextDiagnostics,
+  desktopFetchViaMain,
+  type DesktopApprovalOperation,
+  type DesktopFetchViaMainOptions,
+} from "./desktop";
+import { getCompiledRendererProductProfile } from "./product-profile";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
@@ -47,7 +56,10 @@ export type OpenworkServerDiagnostics = {
   version: string;
   uptimeMs: number;
   readOnly: boolean;
-  approval: { mode: "manual" | "auto"; timeoutMs: number };
+  approval: {
+    mode: "manual" | "auto" | "trusted-local-ui";
+    timeoutMs: number;
+  };
   corsOrigins: string[];
   workspaceCount: number;
   activeWorkspaceId?: string | null;
@@ -1174,6 +1186,114 @@ const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type DesktopRequestApproval = Readonly<{
+  workspaceId: string;
+  operation: DesktopApprovalOperation;
+}>;
+
+function loopbackHttpOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password ||
+      (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "[::1]")
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function approvalServerOrigin(
+  url: string,
+  approval: DesktopRequestApproval | undefined,
+): string | null {
+  if (
+    !approval ||
+    !isDesktopRuntime() ||
+    getCompiledRendererProductProfile().profile !== "local-mvp"
+  ) {
+    return null;
+  }
+  return loopbackHttpOrigin(url);
+}
+
+function desktopRendererOrigin(): string {
+  const profile = getCompiledRendererProductProfile();
+  const internalOrigin = `${profile.brand.rendererScheme}://renderer`;
+  if (typeof window === "undefined") return internalOrigin;
+
+  const candidate = window.location?.origin;
+  return candidate && loopbackHttpOrigin(candidate) === candidate
+    ? candidate
+    : internalOrigin;
+}
+
+function resolveRequestFetch(
+  url: string,
+  approval: DesktopRequestApproval | undefined,
+  relayOptions: Omit<DesktopFetchViaMainOptions, "desktopApprovalCredential"> = {},
+): FetchLike {
+  const serverOrigin = approvalServerOrigin(url, approval);
+  if (!approval || !serverOrigin) {
+    return resolveFetch(url);
+  }
+
+  return async (input, init) => {
+    const grant = await desktopApprovalGrant({
+      workspaceId: approval.workspaceId,
+      operation: approval.operation,
+    });
+    if (
+      !grant.credential ||
+      grant.credential !== grant.credential.trim() ||
+      grant.serverOrigin !== serverOrigin ||
+      grant.workspaceId !== approval.workspaceId ||
+      grant.operation !== approval.operation ||
+      !Number.isFinite(grant.issuedAt) ||
+      !Number.isFinite(grant.expiresAt) ||
+      grant.expiresAt <= Date.now()
+    ) {
+      throw new Error("Electron returned an invalid desktop approval grant.");
+    }
+
+    const headers = new Headers(init?.headers);
+    headers.set("Origin", desktopRendererOrigin());
+    return desktopFetchViaMain(
+      input,
+      { ...init, headers, body: relayOptions.bodyEnvelope ? undefined : init?.body },
+      {
+        ...relayOptions,
+        desktopApprovalCredential: grant.credential,
+      },
+    );
+  };
+}
+
+async function createDesktopMultipartBodyEnvelope(
+  body: FormData,
+): Promise<DesktopFetchMultipartBodyEnvelope> {
+  const parts: DesktopFetchMultipartBodyEnvelope["parts"] = [];
+  for (const [name, value] of body.entries()) {
+    if (typeof value === "string") {
+      parts.push({ kind: "field", name, value });
+      continue;
+    }
+    parts.push({
+      kind: "file",
+      name,
+      fileName: value.name,
+      ...(value.type ? { contentType: value.type } : {}),
+      bytes: new Uint8Array(await value.arrayBuffer()),
+    });
+  }
+  return { kind: "multipart", parts };
+}
 
 async function fetchWithTimeout(
   fetchImpl: FetchLike,
@@ -1217,10 +1337,18 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
+  options: {
+    method?: string;
+    token?: string;
+    hostToken?: string;
+    body?: unknown;
+    timeoutMs?: number;
+    approval?: DesktopRequestApproval;
+  } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS;
+  const fetchImpl = resolveRequestFetch(url, options.approval, { timeoutMs });
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -1229,7 +1357,7 @@ async function requestJson<T>(
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    timeoutMs,
   );
 
   const text = await response.text();
@@ -1288,10 +1416,24 @@ async function requestAgentContextDiagnosticsJson(
 async function requestMultipartRaw(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+  options: {
+    method?: string;
+    token?: string;
+    hostToken?: string;
+    body?: FormData;
+    timeoutMs?: number;
+    approval?: DesktopRequestApproval;
+  } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS;
+  const bodyEnvelope = options.body && approvalServerOrigin(url, options.approval)
+    ? await createDesktopMultipartBodyEnvelope(options.body)
+    : undefined;
+  const fetchImpl = resolveRequestFetch(url, options.approval, {
+    timeoutMs,
+    bodyEnvelope,
+  });
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -1300,7 +1442,7 @@ async function requestMultipartRaw(
       headers: buildAuthHeaders(options.token, options.hostToken),
       body: options.body,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    timeoutMs,
   );
   const text = await response.text();
   return { ok: response.ok, status: response.status, text };
@@ -1309,10 +1451,17 @@ async function requestMultipartRaw(
 async function requestBinary(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
+  options: {
+    method?: string;
+    token?: string;
+    hostToken?: string;
+    timeoutMs?: number;
+    approval?: DesktopRequestApproval;
+  } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS;
+  const fetchImpl = resolveRequestFetch(url, options.approval, { timeoutMs });
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -1320,7 +1469,7 @@ async function requestBinary(
       method: options.method ?? "GET",
       headers: buildAuthHeaders(options.token, options.hostToken),
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    timeoutMs,
   );
 
   if (!response.ok) {
@@ -1565,6 +1714,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.workspaceImport,
+        approval: { workspaceId, operation: "config.import" },
       }),
     previewWorkspaceImport: (workspaceId: string, payload: Record<string, unknown>) =>
       requestJson<OpenworkWorkspaceImportPreview>(
@@ -1622,6 +1772,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           timeoutMs: timeouts.config,
+          approval: { workspaceId, operation: "config.runtime_migrate" },
         },
       ),
     setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>
@@ -1634,6 +1785,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: { providers },
           timeoutMs: timeouts.config,
+          approval: { workspaceId, operation: "config.patch" },
         },
       ),
     getRuntimeConfigStatus: (workspaceId: string) =>
@@ -1648,6 +1800,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "PATCH",
         body: payload,
+        approval: { workspaceId, operation: "config.patch" },
       }),
     getDesktopCloudSync: (workspaceId: string) =>
       requestJson<OpenworkDesktopCloudSyncState>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
@@ -1713,6 +1866,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "POST",
         body: { scope, content },
+        approval: scope === "project"
+          ? { workspaceId, operation: "config.write" }
+          : undefined,
       }),
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
@@ -1741,13 +1897,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins`,
-        { token, hostToken, method: "POST", body: { spec } },
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { spec },
+        },
       ),
     removePlugin: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
-        { token, hostToken, method: "DELETE" },
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+        },
       ),
     listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
@@ -1771,6 +1936,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "POST",
         body: payload,
+        approval: { workspaceId, operation: "skills.upsert" },
       }),
     deleteSkill: (workspaceId: string, name: string) =>
       requestJson<{ path: string }>(
@@ -1780,6 +1946,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "DELETE",
+          approval: { workspaceId, operation: "skills.delete" },
         },
       ),
     listMcp: (workspaceId: string) =>
@@ -1858,12 +2025,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "POST",
         body: payload,
+        approval: { workspaceId, operation: "mcp.add" },
       }),
     removeMcp: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",
+        approval: { workspaceId, operation: "mcp.remove" },
       }),
     setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
       requestJson<{ items: OpenworkMcpItem[] }>(
@@ -1874,6 +2043,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: { enabled },
+          approval: {
+            workspaceId,
+            operation: enabled ? "mcp.enable" : "mcp.disable",
+          },
         },
       ),
 
@@ -1905,12 +2078,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "POST",
         body: payload,
+        approval: { workspaceId, operation: "commands.upsert" },
       }),
     deleteCommand: (workspaceId: string, name: string) =>
       requestJson<{ ok: boolean }>(baseUrl, `/workspace/${workspaceId}/commands/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",
+        approval: { workspaceId, operation: "commands.delete" },
       }),
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
@@ -1928,6 +2103,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: form,
         timeoutMs: timeouts.binary,
+        approval: { workspaceId: id, operation: "workspace.inbox.upload" },
       });
 
       if (!result.ok) {
@@ -2009,6 +2185,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: payload,
+          approval: { workspaceId, operation: "workspace.file.write" },
         },
       ),
 
@@ -2038,6 +2215,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
                 recursive: file.recursive === true,
               })),
             },
+            approval: { workspaceId, operation: "workspace.files.session.ops" },
           },
         );
         return result.items.map((item, index) => ({
@@ -2071,6 +2249,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             baseUpdatedAt: payload.baseUpdatedAt,
             force: payload.force,
           },
+          approval: { workspaceId, operation: "workspace.file.write" },
         },
       ),
 

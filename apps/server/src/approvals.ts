@@ -1,4 +1,8 @@
 import type { ApprovalConfig, ApprovalRequest } from "./types.js";
+import {
+  TRUSTED_DESKTOP_OPERATIONS,
+  type ApprovalActor,
+} from "./desktop-approval-credentials.js";
 import { shortId } from "./utils.js";
 
 interface ApprovalResult {
@@ -11,6 +15,24 @@ interface PendingApproval {
   request: ApprovalRequest;
   resolve: (result: ApprovalResult) => void;
   timeout?: NodeJS.Timeout;
+}
+
+export type ApprovalRequestInput = Omit<ApprovalRequest, "id" | "createdAt"> & {
+  approvalActor?: ApprovalActor;
+};
+
+const trustedDesktopOperations = new Set<string>(TRUSTED_DESKTOP_OPERATIONS);
+
+function canAutoApproveTrustedDesktop(
+  input: Omit<ApprovalRequest, "id" | "createdAt">,
+  approvalActor: ApprovalActor | undefined,
+): boolean {
+  return (
+    approvalActor?.type === "desktop" &&
+    approvalActor.workspaceId === input.workspaceId &&
+    approvalActor.operation === input.action &&
+    trustedDesktopOperations.has(approvalActor.operation)
+  );
 }
 
 export class ApprovalService {
@@ -26,14 +48,21 @@ export class ApprovalService {
   }
 
   async requestApproval(
-    input: Omit<ApprovalRequest, "id" | "createdAt">,
+    input: ApprovalRequestInput,
   ): Promise<ApprovalResult> {
     if (this.config.mode === "auto") {
       return { id: "auto", allowed: true };
     }
+    const { approvalActor, ...requestInput } = input;
+    if (
+      this.config.mode === "trusted-local-ui" &&
+      canAutoApproveTrustedDesktop(requestInput, approvalActor)
+    ) {
+      return { id: "trusted-local-ui", allowed: true };
+    }
     const id = shortId();
     const request: ApprovalRequest = {
-      ...input,
+      ...requestInput,
       id,
       createdAt: Date.now(),
     };
