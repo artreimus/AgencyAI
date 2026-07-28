@@ -11,6 +11,7 @@
  */
 
 import { type DenSettings, readDenSettings, resolveDenBaseUrls } from "./den";
+import { getCompiledRendererProductProfile } from "./product-profile";
 
 const INGEST_PATH = "/v1/telemetry/ingest";
 const INGEST_TIMEOUT_MS = 5_000;
@@ -39,6 +40,8 @@ let pendingEvents: TelemetryEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 10_000;
 const MAX_BATCH_SIZE = 50;
+const DEN_TELEMETRY_ENABLED =
+  getCompiledRendererProductProfile().features.openworkCloud;
 
 function getResolvedIngestUrl(settings: DenSettings): string | null {
   if (!settings.authToken) return null;
@@ -103,6 +106,7 @@ function scheduleFlush(): void {
  * If the user is not signed into Den, the event is silently dropped.
  */
 export function trackTelemetryEvent(type: string, fields: TelemetryEventFields = {}): void {
+  if (!DEN_TELEMETRY_ENABLED) return;
   const settings = readDenSettings();
   if (!settings.authToken) return;
 
@@ -154,6 +158,10 @@ export function trackTaskFailed(sessionId: string, durationMs: number): void {
  * Flush any pending events immediately. Call on sign-out or app close.
  */
 export function flushTelemetry(): void {
+  if (!DEN_TELEMETRY_ENABLED) {
+    pendingEvents = [];
+    return;
+  }
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;

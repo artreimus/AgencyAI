@@ -38,7 +38,7 @@
     "evals": "node evals/runner/run.mjs --mode automation",
     "fraimz": "node evals/runner/run.mjs --mode demo",
     "evals:typecheck": "tsc -p evals",
-    "evals:test": "node --test evals/runner/*.test.ts evals/drivers/agencyai-pr01-coexistence-fixture.test.mjs",
+    "evals:test": "node --test evals/runner/*.test.ts evals/drivers/agencyai-pr01-coexistence-fixture.test.mjs evals/drivers/agencyai-pr02-local-renderer-fixture.test.mjs",
     "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",

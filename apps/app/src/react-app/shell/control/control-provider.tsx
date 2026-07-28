@@ -234,7 +234,13 @@ function ControlModeSpotlight({ spotlight }: { spotlight: SpotlightState }) {
   );
 }
 
-export function OpenworkControlProvider({ children }: { children: ReactNode }) {
+export function OpenworkControlProvider({
+  children,
+  allowedActionIds,
+}: {
+  children: ReactNode;
+  allowedActionIds?: ReadonlySet<string>;
+}) {
   const location = useLocation();
   const actionsRef = useRef(new Map<string, RegisteredAction>());
   const listenersRef = useRef(new Set<(snapshot: OpenworkControlSnapshot) => void>());
@@ -338,6 +344,9 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   }, [busyActionId, listActionMetadata, route]);
 
   const registerAction = useCallback((actionId: string, actionRef: ControlActionRef) => {
+    if (allowedActionIds && !allowedActionIds.has(actionId)) {
+      return () => undefined;
+    }
     const token = Symbol(actionId);
     const previous = actionsRef.current.get(actionId);
     actionsRef.current.set(actionId, {
@@ -357,7 +366,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         setVersion((value) => value + 1);
       }
     };
-  }, []);
+  }, [allowedActionIds]);
 
   const playTargetChoreography = useCallback(async (action: OpenworkControlAction, runId: number) => {
     if (!isBrowser()) return;

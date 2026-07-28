@@ -1,8 +1,12 @@
 /** @jsxImportSource react */
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
 import { useBootState, useBootOverlayVisible } from "./boot-state";
 import { OwDotTicker } from "./dot-ticker";
 
-const RELEASES_URL = "https://github.com/different-ai/openwork/releases";
+const PRODUCT = getCompiledRendererProductProfile();
+const RELEASES_URL = PRODUCT.features.runtimeDownloads && PRODUCT.brand.repository
+  ? `https://github.com/${PRODUCT.brand.repository.owner}/${PRODUCT.brand.repository.name}/releases`
+  : null;
 
 /**
  * Quiet, opaque boot overlay. Solid surface fill so nothing bleeds through.
@@ -34,17 +38,23 @@ export function LoadingOverlay() {
         {error ? (
           <div className="flex flex-col gap-2 text-[12px] leading-5 text-red-11">
             <div>{error}</div>
-            <div className="text-dls-secondary">
-              Download the latest version manually here:{" "}
-              <a
-                href={RELEASES_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-dls-primary underline decoration-dls-primary/40 underline-offset-4"
-              >
-                {RELEASES_URL}
-              </a>
-            </div>
+            {RELEASES_URL ? (
+              <div className="text-dls-secondary">
+                Download the latest version manually here:{" "}
+                <a
+                  href={RELEASES_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-dls-primary underline decoration-dls-primary/40 underline-offset-4"
+                >
+                  {RELEASES_URL}
+                </a>
+              </div>
+            ) : (
+              <div className="text-dls-secondary">
+                Restart {PRODUCT.brand.name}. If this continues, copy diagnostics from Settings.
+              </div>
+            )}
           </div>
         ) : null}
       </div>

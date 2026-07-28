@@ -5,6 +5,7 @@ import { usePanelRef } from "react-resizable-panels";
 import { Cloud, FileText, Globe, Mic2, PanelRight, Settings2, TextSearch, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
+import { getCompiledRendererProductProfile } from "@/app/lib/product-profile";
 import { t } from "../../../../i18n";
 import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
@@ -90,6 +91,7 @@ const STARTUP_SKELETON_ROWS = [
 const GLOBAL_VOICE_SIDE_PANEL_KEY = "__openwork_voice__";
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const EMPTY_SESSION_TABS: WorkbenchSessionTab[] = [];
+const PRODUCT = getCompiledRendererProductProfile();
 
 export type OpenSessionTab = WorkbenchSessionTab;
 
@@ -135,6 +137,7 @@ export type SessionPageSidebarProps = {
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
+  canShareWorkspace?: boolean;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
   onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
@@ -345,7 +348,9 @@ export function SessionPage(props: SessionPageProps) {
     () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
     [],
   );
-  const voiceExtensionEnabled = voiceExtension ? isOpenWorkExtensionEnabled(voiceExtension) : false;
+  const voiceExtensionEnabled = PRODUCT.features.voice && voiceExtension
+    ? isOpenWorkExtensionEnabled(voiceExtension)
+    : false;
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -1034,6 +1039,7 @@ export function SessionPage(props: SessionPageProps) {
             setCreateGroupOpen(true);
           }}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
+          canShareWorkspace={props.sidebar.canShareWorkspace}
           onShareWorkspace={props.sidebar.onShareWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
           onRecoverWorkspace={props.sidebar.onRecoverWorkspace}

@@ -28,6 +28,7 @@ import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import {
   deepLinkBridgeEvent,
   drainPendingDeepLinks,
@@ -84,6 +85,13 @@ export type DenAuthStore = {
 };
 
 const DenAuthContext = createContext<DenAuthStore | undefined>(undefined);
+const LOCAL_DEN_AUTH_STORE: DenAuthStore = Object.freeze({
+  status: "signed_out",
+  user: null,
+  error: null,
+  isSignedIn: false,
+  refresh: async () => undefined,
+});
 
 type DenAuthProviderProps = {
   children: ReactNode;
@@ -421,6 +429,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 export function useDenAuth(): DenAuthStore {
   const context = use(DenAuthContext);
   if (!context) {
+    if (!getCompiledRendererProductProfile().features.openworkCloud) {
+      return LOCAL_DEN_AUTH_STORE;
+    }
     throw new Error("useDenAuth must be used within a DenAuthProvider");
   }
   return context;

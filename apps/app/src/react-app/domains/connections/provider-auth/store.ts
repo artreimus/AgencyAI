@@ -2,7 +2,6 @@ import { useSyncExternalStore } from "react";
 
 import { applyEdits, modify, parse } from "jsonc-parser";
 import type {
-  ProviderAuthAuthorization,
   ProviderListResponse,
 } from "@opencode-ai/sdk/v2/client";
 
@@ -88,6 +87,17 @@ import {
   readStoredDefaultModel,
   writeStoredDefaultModel,
 } from "../../../kernel/model-config";
+import type {
+  ProviderAuthMethod,
+  ProviderAuthProvider,
+  ProviderOAuthStartResult,
+} from "./types";
+
+export type {
+  ProviderAuthMethod,
+  ProviderAuthProvider,
+  ProviderOAuthStartResult,
+} from "./types";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
@@ -155,27 +165,6 @@ function configsAreSemanticallyEqual(left: string, right: string): boolean {
   return leftCanonical !== null && leftCanonical === rightCanonical;
 }
 
-export type ProviderAuthMethod = {
-  type: "oauth" | "api" | "cloud";
-  label: string;
-  methodIndex?: number;
-  cloudProviderId?: string;
-  description?: string;
-  env?: string[];
-  modelCount?: number;
-};
-
-export type ProviderAuthProvider = {
-  id: string;
-  name: string;
-  env: string[];
-};
-
-export type ProviderOAuthStartResult = {
-  methodIndex: number;
-  authorization: ProviderAuthAuthorization;
-};
-
 export type ProviderAuthStoreSnapshot = {
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
@@ -189,6 +178,7 @@ export type ProviderAuthStoreSnapshot = {
 };
 
 type CreateProviderAuthStoreOptions = {
+  cloudEnabled?: boolean;
   client: () => Client | null;
   providers: () => ProviderListItem[];
   providerDefaults: () => Record<string, string>;
@@ -234,6 +224,7 @@ function providerListModelEntitlementOptions(
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
+  const cloudEnabled = options.cloudEnabled !== false;
   const listeners = new Set<() => void>();
 
   let snapshot: ProviderAuthStoreSnapshot;
@@ -464,6 +455,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const refreshImportedCloudProviders = async (refreshOptions?: { strict?: boolean }) => {
+    if (!cloudEnabled) {
+      setStateField("importedCloudProviders", {});
+      return {};
+    }
     try {
       const config = await readWorkspaceOpenworkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
@@ -918,6 +913,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const refreshCloudOrgProviders = async (optionsArg?: { force?: boolean }) => {
+    if (!cloudEnabled) {
+      setStateField("cloudOrgProviders", []);
+      return [];
+    }
     const settings = readDenSettings();
     const loadKey = getCloudOrgProvidersKey();
     const token = settings.authToken?.trim() ?? "";
@@ -1512,6 +1511,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
   ) {
+    if (!cloudEnabled) {
+      throw new Error("Cloud-managed providers are disabled in this product.");
+    }
     if (!optionsArg?.silent) {
       setStateField("providerAuthError", null);
     }
@@ -1625,6 +1627,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
   ) {
+    if (!cloudEnabled) {
+      throw new Error("Cloud-managed providers are disabled in this product.");
+    }
     if (!optionsArg?.silent) {
       setStateField("providerAuthError", null);
     }
@@ -1692,6 +1697,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const hasCloudProviderSyncPrerequisites = () => {
+    if (!cloudEnabled) return false;
     const settings = readDenSettings();
     const workspaceTarget =
       options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId() || "";
@@ -1823,6 +1829,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   async function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (!cloudEnabled) return;
     const request = cloudProviderSyncTail
       .catch(() => undefined)
       .then(() =>
@@ -1976,6 +1983,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     lastWorkspaceKey = workspaceKey;
     refreshSnapshot();
     emitChange();
+    if (!cloudEnabled) return;
     if (workspaceChanged) {
       void refreshImportedCloudProviders();
     }
@@ -1999,6 +2007,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     disposed = false;
     started = true;
     lastWorkspaceKey = currentWorkspaceKey();
+    if (!cloudEnabled) {
+      refreshSnapshot();
+      emitChange();
+      return;
+    }
     if (typeof window !== "undefined") {
       const handleDenSessionUpdate = (event: Event) => {
         cloudOrgProvidersLoadKey = "";

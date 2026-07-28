@@ -7,6 +7,7 @@ import {
   type DenSettings,
 } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import type {
   OpenworkCloudMcpFailure,
   OpenworkCloudMcpHealth,
@@ -25,6 +26,9 @@ import {
   runOpenworkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
+
+const CLOUD_ENABLED =
+  getCompiledRendererProductProfile().features.openworkCloud;
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
@@ -355,19 +359,20 @@ export function useSessionMcpMaintenance(input: {
       setCloudMcpState(IDLE_CLOUD_MCP_MAINTENANCE_STATE);
       return;
     }
-    const settings = readDenSettings();
+    const cloudSignedIn = CLOUD_ENABLED && input.cloudSignedIn;
+    const settings = cloudSignedIn ? readDenSettings() : null;
     const targetKey = getSessionMcpMaintenanceTargetKey({
       client,
-      cloudSignedIn: input.cloudSignedIn,
-      denBaseUrl: settings.baseUrl,
-      orgId: settings.activeOrgId,
+      cloudSignedIn,
+      denBaseUrl: settings?.baseUrl,
+      orgId: settings?.activeOrgId,
       workspaceId,
       providerModel: input.providerModel,
     });
 
     let cancelled = false;
     let busyRetryTimer: number | null = null;
-    setCloudMcpState(input.cloudSignedIn
+    setCloudMcpState(cloudSignedIn
       ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
       : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
 
@@ -417,7 +422,7 @@ export function useSessionMcpMaintenance(input: {
       const started = await runSessionMcpMaintenanceTask({
         targetKey,
         task: async () => {
-          if (input.cloudSignedIn) {
+          if (cloudSignedIn) {
             await runCloudMcpMaintenanceWithRetry({
               attempt: () => syncCloudControlMcpInBackground({
                 client,

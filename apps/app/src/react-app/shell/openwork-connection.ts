@@ -5,6 +5,7 @@ import {
 } from "../../app/lib/openwork-server";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { openworkServerInfo, type OpenworkServerInfo } from "../../app/lib/desktop";
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
 import { isDesktopRuntime } from "../../app/utils";
 
 export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "same-origin" | "empty";
@@ -21,6 +22,38 @@ function hasUsableConnection(url: string, token: string) {
   return url.trim().length > 0 && token.trim().length > 0;
 }
 
+function emptyConnection(): ResolvedOpenworkConnection {
+  return {
+    normalizedBaseUrl: "",
+    resolvedToken: "",
+    resolvedHostToken: "",
+    hostInfo: null,
+    source: "empty",
+  };
+}
+
+export function projectLocalDesktopRuntimeConnection(
+  info: OpenworkServerInfo | null | undefined,
+): ResolvedOpenworkConnection {
+  const normalizedBaseUrl = normalizeOpenworkServerUrl(info?.baseUrl ?? "") ?? "";
+  const resolvedToken =
+    info?.ownerToken?.trim() || info?.clientToken?.trim() || "";
+  if (
+    info?.running !== true ||
+    !isLoopbackOpenworkServerUrl(normalizedBaseUrl) ||
+    !hasUsableConnection(normalizedBaseUrl, resolvedToken)
+  ) {
+    return emptyConnection();
+  }
+  return {
+    normalizedBaseUrl,
+    resolvedToken,
+    resolvedHostToken: info.hostToken?.trim() || "",
+    hostInfo: info,
+    source: "desktop-runtime",
+  };
+}
+
 /**
  * Resolve the OpenWork server connection for routes that consume the server API.
  *
@@ -30,6 +63,18 @@ function hasUsableConnection(url: string, token: string) {
  * connections and for desktop cases where the runtime bridge is unavailable.
  */
 export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConnection> {
+  const product = getCompiledRendererProductProfile();
+  if (!product.features.openworkCloud) {
+    if (!isDesktopRuntime()) return emptyConnection();
+    try {
+      return projectLocalDesktopRuntimeConnection(
+        await openworkServerInfo() as OpenworkServerInfo,
+      );
+    } catch {
+      return emptyConnection();
+    }
+  }
+
   let staleDesktopRuntimeBaseUrl = "";
 
   if (isDesktopRuntime()) {

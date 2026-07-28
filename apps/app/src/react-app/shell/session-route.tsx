@@ -20,6 +20,7 @@ import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { getCompiledRendererProductProfile } from "@/app/lib/product-profile";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
@@ -190,7 +191,7 @@ import { useSessionControlActions } from "@/react-app/domains/session/control/se
 import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
-import { SettingsSurface } from "./settings-route";
+import { LocalSettingsSurface } from "./settings-route-local";
 import { writeStoredDefaultModel } from "@/react-app/kernel/model-config";
 import {
   ensureProviderListQuery,
@@ -199,6 +200,8 @@ import {
   refreshProviderListQueries,
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
+
+const PRODUCT = getCompiledRendererProductProfile();
 
 /**
  * Serialize an SDK error value into a string that parseSessionError can parse.
@@ -347,7 +350,9 @@ async function draftToParts(
         if (pasted) parts.push({ type: "text", text: pasted });
         continue;
       }
-      const connectSkill = parseConnectSkillToken(segment);
+      const connectSkill = PRODUCT.features.connectLinks
+        ? parseConnectSkillToken(segment)
+        : null;
       if (connectSkill) {
         parts.push({ type: "text", text: connectSkillPrompt(connectSkill) });
         continue;
@@ -450,6 +455,7 @@ export function SessionRoute() {
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
   const [developerMode, setDeveloperMode] = useState(() => {
+    if (!PRODUCT.features.openworkCloud) return false;
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("openwork.developerMode") === "1";
   });
@@ -557,6 +563,7 @@ export function SessionRoute() {
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
   useEffect(() => {
+    if (!PRODUCT.features.openworkCloud) return;
     const handler = () => setDenSessionVersion((v) => v + 1);
     window.addEventListener(denSessionUpdatedEvent, handler);
     window.addEventListener(denSettingsChangedEvent, handler);
@@ -764,6 +771,10 @@ export function SessionRoute() {
     setDisabledProviderIds,
   });
   useEffect(() => {
+    if (!PRODUCT.features.openworkCloud) {
+      setActiveOrganizationRole(null);
+      return;
+    }
     if (!denAuth.isSignedIn) {
       setActiveOrganizationRole(null);
       return;
@@ -797,9 +808,12 @@ export function SessionRoute() {
     };
   }, [denAuth.isSignedIn, denAuth.status, denSessionVersion]);
   const handleModelPickerOpen = useCallback(() => {
-    void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+    if (PRODUCT.features.openworkCloud) {
+      void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+    }
   }, [sessionProviderAuthStore]);
   const openWorkModelsEntitled = useMemo(() => {
+    if (!PRODUCT.features.openworkModels) return false;
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
       (provider) =>
@@ -820,6 +834,7 @@ export function SessionRoute() {
     sessionProviderAuthSnapshot.importedCloudProviders,
   ]);
   const refreshOrganizationModelAccess = useCallback(async () => {
+    if (!PRODUCT.features.openworkCloud) return;
     await refreshOrganizationModels({
       runCloudProviderSync: sessionProviderAuthStore.runCloudProviderSync,
       refreshProviders: () => sessionProviderAuthStore.refreshProviders({ force: true }),
@@ -829,12 +844,15 @@ export function SessionRoute() {
     await refreshOrganizationModelAccess();
   }, [refreshOrganizationModelAccess]);
   const organizationModelsSettingsUrl = useMemo(() => {
+    if (!PRODUCT.features.openworkCloud) return undefined;
     if (activeOrganizationRole !== "owner" && activeOrganizationRole !== "admin") {
       return undefined;
     }
     return new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString();
   }, [activeOrganizationRole, denSessionVersion]);
-  const restrictToCloudProviders = checkDesktopRestriction({ restriction: "allowCustomProviders" });
+  const restrictToCloudProviders =
+    PRODUCT.features.openworkCloud &&
+    checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const entitledModelOptions = useMemo(() =>
     filterEntitledModelOptions(
       providerListModelEntitlementOptions(cloudProviderList ?? providerListQuery.data),
@@ -993,8 +1011,11 @@ export function SessionRoute() {
       if (cancelled) return;
       // When not signed in, filter out cloud-managed providers (lpr_*)
       // so stale entries from a previous session don't appear.
-      const hasCloudAuth = !!readDenSettings().authToken?.trim();
-      const isCloudProvider = (id: string) => /^lpr_/i.test(id);
+      const hasCloudAuth =
+        PRODUCT.features.openworkCloud &&
+        !!readDenSettings().authToken?.trim();
+      const isCloudProvider = (id: string) =>
+        /^lpr_/i.test(id) || id.trim().toLowerCase() === "openwork";
       const all = hasCloudAuth
         ? ((value.all ?? []) as ProviderListItem[])
         : ((value.all ?? []) as ProviderListItem[]).filter(
@@ -1124,11 +1145,15 @@ export function SessionRoute() {
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
-      openWorkModelsEntitled,
-      onRefreshOrganizationModels: refreshOrganizationModelAccess,
+      openWorkModelsEntitled: PRODUCT.features.openworkModels
+        ? openWorkModelsEntitled
+        : false,
+      onRefreshOrganizationModels: PRODUCT.features.openworkCloud
+        ? refreshOrganizationModelAccess
+        : undefined,
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
-        if (open) {
+        if (open && PRODUCT.features.openworkCloud) {
           void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
         }
       },
@@ -1230,7 +1255,7 @@ export function SessionRoute() {
         });
       },
       cloudMcpSubmissionState,
-      onOpenConnect: () => navigate("/settings/connect"),
+      onOpenConnect: () => navigate("/settings/extensions"),
       onDraftChange: () => {
         // Draft persistence will be wired once the full React shell owns session state.
       },
@@ -1362,11 +1387,13 @@ export function SessionRoute() {
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
-      onRefreshOrganizationModels: refreshOrganizationModelAccess,
+      onRefreshOrganizationModels: PRODUCT.features.openworkCloud
+        ? refreshOrganizationModelAccess
+        : undefined,
       modelPickerOpen: modelPicker.compactOpen,
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
-        if (open) {
+        if (open && PRODUCT.features.openworkCloud) {
           void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
         }
       },
@@ -1380,7 +1407,9 @@ export function SessionRoute() {
         }));
         modelPicker.setCompactOpen(false);
       },
-      openWorkModelsEntitled,
+      openWorkModelsEntitled: PRODUCT.features.openworkModels
+        ? openWorkModelsEntitled
+        : false,
       modelVariantLabel,
       modelVariant: modelVariantValue,
       modelBehaviorOptions,
@@ -2207,7 +2236,10 @@ export function SessionRoute() {
         handleOpenCreateWorkspace();
         return;
       }
-      const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
+      const folder = await joinDesktopPath(
+        home,
+        `${PRODUCT.brand.name} Chat`,
+      ).catch(() => "");
       if (!folder) {
         handleOpenCreateWorkspace();
         return;
@@ -2243,6 +2275,7 @@ export function SessionRoute() {
     directory?: string | null;
     displayName?: string | null;
   }) => {
+    if (!PRODUCT.features.remoteWorkspaces) return false;
     const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
     if (!baseUrlValue) return false;
     setCreateWorkspaceRemoteBusy(true);
@@ -2381,7 +2414,7 @@ export function SessionRoute() {
         onClose: () => sessionProviderAuthStore.closeProviderAuthModal(),
       } : null}
       settingsSlot={
-        <SettingsSurface
+        <LocalSettingsSurface
           embedded
           initialPath="extensions"
           workspaceId={selectedWorkspaceId}
@@ -2404,6 +2437,7 @@ export function SessionRoute() {
         selectedWorkspaceId,
         selectedSessionId,
         developerMode: false,
+        canShareWorkspace: PRODUCT.features.workspaceSharing,
         sessionStatusById: sidebarSessionStatusById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
@@ -2528,7 +2562,7 @@ export function SessionRoute() {
       todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
       shareWorkspaceModal={
-        shareWorkspaceState.shareWorkspaceOpen
+        PRODUCT.features.workspaceSharing && shareWorkspaceState.shareWorkspaceOpen
           ? {
               open: true,
               onClose: shareWorkspaceState.closeShareWorkspace,
@@ -2602,13 +2636,15 @@ export function SessionRoute() {
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
-    <OpenWorkModelsStartupDialog
-      open={openWorkModelsPromo.open}
-      isSignedIn={denAuth.isSignedIn}
-      models={OPENWORK_MODEL_PREVIEWS}
-      onSubscribe={openWorkModelsPromo.subscribe}
-      onContinueWithout={openWorkModelsPromo.continueWithout}
-    />
+    {PRODUCT.features.openworkModels ? (
+      <OpenWorkModelsStartupDialog
+        open={openWorkModelsPromo.open}
+        isSignedIn={denAuth.isSignedIn}
+        models={OPENWORK_MODEL_PREVIEWS}
+        onSubscribe={openWorkModelsPromo.subscribe}
+        onContinueWithout={openWorkModelsPromo.continueWithout}
+      />
+    ) : null}
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
       onClose={() => {
@@ -2616,7 +2652,11 @@ export function SessionRoute() {
         setCreateWorkspaceError(null);
       }}
       onConfirm={handleCreateWorkspace}
-      onConfirmRemote={handleCreateRemoteWorkspace}
+      onConfirmRemote={
+        PRODUCT.features.remoteWorkspaces
+          ? handleCreateRemoteWorkspace
+          : undefined
+      }
       onPickFolder={async () => singlePickedDirectory(await pickDirectory({ title: t("onboarding.authorize_folder") }))}
       submitting={createWorkspaceBusy}
       localError={createWorkspaceError}
@@ -2629,17 +2669,19 @@ export function SessionRoute() {
       remoteSubmitting={createWorkspaceRemoteBusy}
       remoteError={createWorkspaceRemoteError}
     />
-    <CreateRemoteWorkspaceModal
-      open={remoteWorkspaceConnectionEditor.workspace !== null}
-      onClose={remoteWorkspaceConnectionEditor.close}
-      onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
-      initialValues={remoteWorkspaceConnectionEditor.initialValues}
-      submitting={remoteWorkspaceConnectionEditor.busy}
-      error={remoteWorkspaceConnectionEditor.error}
-      title={t("dashboard.edit_remote_workspace_title")}
-      subtitle={t("dashboard.edit_remote_workspace_subtitle")}
-      confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
-    />
+    {PRODUCT.features.remoteWorkspaces ? (
+      <CreateRemoteWorkspaceModal
+        open={remoteWorkspaceConnectionEditor.workspace !== null}
+        onClose={remoteWorkspaceConnectionEditor.close}
+        onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
+        initialValues={remoteWorkspaceConnectionEditor.initialValues}
+        submitting={remoteWorkspaceConnectionEditor.busy}
+        error={remoteWorkspaceConnectionEditor.error}
+        title={t("dashboard.edit_remote_workspace_title")}
+        subtitle={t("dashboard.edit_remote_workspace_subtitle")}
+        confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
+      />
+    ) : null}
     <RenameWorkspaceModal
       open={renameWorkspaceId !== null}
       title={renameWorkspaceTitle}
@@ -2689,7 +2731,17 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[
+        ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []),
+        sessionSearchPaletteItem,
+        ...terminalPaletteItems,
+        ...(PRODUCT.features.openworkCloud ? [developerModePaletteItem] : []),
+        diagnosticsCopyPaletteItem,
+        diagnosticsExportPaletteItem,
+        nextSessionTabPaletteItem,
+        prevSessionTabPaletteItem,
+        reloadConfigPaletteItem,
+      ]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
@@ -2704,8 +2756,14 @@ export function SessionRoute() {
     <ModelPickerModal
       open={modelPicker.open}
       options={modelPicker.options}
-      organizationModelsEmpty={organizationModelsEmpty}
-      organizationModelsSettingsUrl={organizationModelsSettingsUrl}
+      organizationModelsEmpty={
+        PRODUCT.features.openworkCloud ? organizationModelsEmpty : false
+      }
+      organizationModelsSettingsUrl={
+        PRODUCT.features.openworkCloud
+          ? organizationModelsSettingsUrl
+          : undefined
+      }
 
       query={modelPicker.query}
       setQuery={modelPicker.setQuery}
@@ -2767,10 +2825,20 @@ export function SessionRoute() {
         handleOpenSettings("/settings/general");
       }}
       onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); }}
-      openWorkModelsEntitled={openWorkModelsEntitled}
-      onRefreshOpenWorkModels={refreshOpenWorkModels}
-      onRefreshOrganizationModels={refreshOrganizationModelAccess}
-      restrictToCloud={restrictToCloudProviders}
+      openWorkModelsEntitled={
+        PRODUCT.features.openworkModels ? openWorkModelsEntitled : false
+      }
+      onRefreshOpenWorkModels={
+        PRODUCT.features.openworkModels ? refreshOpenWorkModels : undefined
+      }
+      onRefreshOrganizationModels={
+        PRODUCT.features.openworkCloud
+          ? refreshOrganizationModelAccess
+          : undefined
+      }
+      restrictToCloud={
+        PRODUCT.features.openworkCloud ? restrictToCloudProviders : false
+      }
     />
     </WorkspaceProvider>
   );

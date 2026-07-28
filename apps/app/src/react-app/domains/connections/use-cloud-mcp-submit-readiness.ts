@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { readDenSettings } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
+import { getCompiledRendererProductProfile } from "../../../app/lib/product-profile";
 import type {
   OpenworkCloudMcpProviderModelContext,
   OpenworkServerClient,
@@ -27,6 +28,9 @@ import {
 import {
   syncCloudControlMcpInBackground,
 } from "./use-session-mcp-maintenance";
+
+const CLOUD_ENABLED =
+  getCompiledRendererProductProfile().features.openworkCloud;
 
 type CloudMcpSubmitReadinessClient = Pick<
   OpenworkServerClient,
@@ -85,15 +89,27 @@ function missingContextIssue(input: {
 export function useCloudMcpSubmitReadiness(
   input: UseCloudMcpSubmitReadinessInput,
 ): CloudMcpSubmitReadiness {
+  const cloudAuthStatus = CLOUD_ENABLED ? input.cloudAuthStatus : "signed_out";
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [state, setState] = useState<CloudMcpSubmissionGateState>(
     IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   );
   const coordinatorRef = useRef(createCloudMcpSubmissionCoordinator());
-  const authStatusRef = useRef(input.cloudAuthStatus);
+  const authStatusRef = useRef(cloudAuthStatus);
   const authWaitersRef = useRef(new Set<() => void>());
-  authStatusRef.current = input.cloudAuthStatus;
-  const settings = useMemo(() => readDenSettings(), [input.cloudAuthStatus, settingsVersion]);
+  authStatusRef.current = cloudAuthStatus;
+  const settings = useMemo(
+    () => CLOUD_ENABLED
+      ? readDenSettings()
+      : {
+          baseUrl: "",
+          authToken: null,
+          activeOrgId: null,
+          activeOrgSlug: null,
+          activeOrgName: null,
+        },
+    [input.cloudAuthStatus, settingsVersion],
+  );
   const workspaceId = input.workspaceId?.trim() ?? "";
   const serverBaseUrl = input.client?.baseUrl.trim() ?? "";
   const orgId = settings.activeOrgId?.trim() ?? "";
@@ -105,7 +121,7 @@ export function useCloudMcpSubmitReadiness(
   });
   const userState = scope ? readCloudMcpUserState(scope) : null;
   const decision = useMemo(() => decideCloudMcpSubmissionGate({
-    cloudAuthStatus: input.cloudAuthStatus,
+    cloudAuthStatus,
     cloudHasSessionToken: Boolean(settings.authToken?.trim()),
     denBaseUrl: settings.baseUrl,
     serverBaseUrl,
@@ -114,7 +130,7 @@ export function useCloudMcpSubmitReadiness(
     providerModel: input.providerModel,
     userState,
   }), [
-    input.cloudAuthStatus,
+    cloudAuthStatus,
     input.providerModel?.model,
     input.providerModel?.provider,
     orgId,
@@ -128,7 +144,7 @@ export function useCloudMcpSubmitReadiness(
   currentScopeKeyRef.current = decision.scopeKey;
   const previousScopeKeyRef = useRef(decision.scopeKey);
   const gateSnapshot = {
-    cloudAuthStatus: input.cloudAuthStatus,
+    cloudAuthStatus,
     client: input.client,
     decision,
     providerModel: input.providerModel,
@@ -139,6 +155,7 @@ export function useCloudMcpSubmitReadiness(
   gateSnapshotRef.current = gateSnapshot;
 
   useEffect(() => {
+    if (!CLOUD_ENABLED) return;
     if (typeof window === "undefined") return;
     const handleSettingsChanged = () => setSettingsVersion((version) => version + 1);
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
@@ -146,11 +163,11 @@ export function useCloudMcpSubmitReadiness(
   }, []);
 
   useEffect(() => {
-    if (input.cloudAuthStatus === "checking") return;
+    if (cloudAuthStatus === "checking") return;
     const waiters = [...authWaitersRef.current];
     authWaitersRef.current.clear();
     for (const resolve of waiters) resolve();
-  }, [input.cloudAuthStatus]);
+  }, [cloudAuthStatus]);
 
   useEffect(() => {
     if (previousScopeKeyRef.current === decision.scopeKey) return;
