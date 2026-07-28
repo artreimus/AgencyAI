@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { opencodeDataDirs as defaultOpencodeDataDirs } from "@openwork/paths";
 
 import Database from "better-sqlite3";
+import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 
 type SeedMessage = {
   role: "assistant" | "user";
@@ -57,6 +58,9 @@ function preferredDbNames(): string[] {
 }
 
 function candidateOpencodeDbPaths(): string[] {
+  const localDbPath = resolveLocalStorageLayoutPath("OPENCODE_DB");
+  if (localDbPath) return [localDbPath];
+
   const override = process.env.OPENCODE_DB?.trim();
   if (override) {
     if (isAbsolute(override)) return [override];

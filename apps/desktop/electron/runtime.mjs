@@ -9,7 +9,6 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
-
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
@@ -553,7 +552,43 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
+/**
+ * Application-owned storage paths are the final layer: inherited variables,
+ * env-store values, and individual launch options may not retarget them.
+ *
+ * @param {NodeJS.ProcessEnv} [baseEnv]
+ * @param {NodeJS.ProcessEnv} [caEnv]
+ * @param {NodeJS.ProcessEnv} [extra]
+ * @param {NodeJS.ProcessEnv} [storageEnvironment]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function mergeRuntimeChildEnv(
+  baseEnv = {},
+  caEnv = {},
+  extra = {},
+  storageEnvironment = {},
+) {
+  return {
+    ...mergeSystemCaChildEnv(baseEnv, caEnv, extra),
+    ...storageEnvironment,
+  };
+}
+
+export function resolveRuntimeRemoteAccessEnabled(
+  requested,
+  allowRemoteAccess = true,
+) {
+  return allowRemoteAccess === true && requested === true;
+}
+
+export function createRuntimeManager({
+  app,
+  desktopRoot,
+  listLocalWorkspacePaths,
+  storageLayout = null,
+  storageEnvironment = {},
+  allowRemoteAccess = true,
+}) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -580,6 +615,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   const userDataDir = app.getPath("userData");
+  if (storageLayout && path.resolve(userDataDir) !== path.resolve(storageLayout.userData)) {
+    throw new Error("Electron userData must match the resolved StorageLayout");
+  }
+  // This is populated only after the embedded server validates the exact
+  // contract. runtimeStatus must report consumption, not merely launch input.
+  let serverStorageAttestation = null;
   const sidecarDirs = [
     path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
@@ -746,24 +787,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return { port: await findFreePort(host), preferredPort };
   }
 
-  async function ensureDevModePaths() {
-    const root = path.join(userDataDir, "openwork-dev-data");
-    const paths = {
-      homeDir: path.join(root, "home"),
-      xdgConfigHome: path.join(root, "xdg", "config"),
-      xdgDataHome: path.join(root, "xdg", "data"),
-      xdgCacheHome: path.join(root, "xdg", "cache"),
-      xdgStateHome: path.join(root, "xdg", "state"),
-      opencodeConfigDir: path.join(root, "config", "opencode"),
-    };
-
-    for (const dir of Object.values(paths)) {
-      await mkdir(dir, { recursive: true });
-    }
-    await mkdir(path.join(paths.xdgDataHome, "opencode"), { recursive: true });
-    return paths;
-  }
-
   async function buildChildEnv(extra = {}) {
     /** @type {NodeJS.ProcessEnv} */
     // User env is layered first so process.env + any caller overrides always
@@ -777,7 +800,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : await systemCaEnv();
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
     // the exported OS trust store through the same child env variable.
-    const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
+    const env = mergeRuntimeChildEnv(baseEnv, caEnv, extra, storageEnvironment);
     const pathKey =
       Object.prototype.hasOwnProperty.call(env, "PATH") ||
       !Object.prototype.hasOwnProperty.call(env, "Path")
@@ -786,18 +809,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const pathEnv = enrichedPath(sidecarDirs, env[pathKey]);
     if (pathEnv) {
       env[pathKey] = pathEnv;
-    }
-    if (process.env.OPENWORK_DEV_MODE === "1") {
-      const devPaths = await ensureDevModePaths();
-      env.OPENWORK_DEV_MODE = "1";
-      env.HOME = devPaths.homeDir;
-      env.USERPROFILE = devPaths.homeDir;
-      env.XDG_CONFIG_HOME = devPaths.xdgConfigHome;
-      env.XDG_DATA_HOME = devPaths.xdgDataHome;
-      env.XDG_CACHE_HOME = devPaths.xdgCacheHome;
-      env.XDG_STATE_HOME = devPaths.xdgStateHome;
-      env.OPENCODE_CONFIG_DIR = devPaths.opencodeConfigDir;
-      env.OPENCODE_TEST_HOME = devPaths.homeDir;
     }
     return env;
   }
@@ -1154,7 +1165,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
     await stopChild(openworkServerState);
 
-    const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+    const remoteAccessEnabled = resolveRuntimeRemoteAccessEnabled(
+      options.remoteAccessEnabled,
+      allowRemoteAccess,
+    );
+    const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
@@ -1217,6 +1232,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeCwd: managedOpencodeWorkdir(),
     });
     inProcessServer = handle;
+    serverStorageAttestation = handle.storage ?? null;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
     engineState.managedByServer = Boolean(handle.managedOpencode);
     engineState.managedPid = handle.managedOpencode?.pid ?? null;
@@ -1226,14 +1242,16 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const baseUrl = handle.url;
 
     openworkServerState.inProcess = true;
-    openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
+    openworkServerState.remoteAccessEnabled = remoteAccessEnabled;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
     openworkServerState.clientToken = tokens.clientToken;
     openworkServerState.hostToken = tokens.hostToken;
 
-    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
+    const connectUrls = remoteAccessEnabled
+      ? buildConnectUrls(boundPort)
+      : { connectUrl: null, mdnsUrl: null, lanUrl: null };
     openworkServerState.connectUrl = connectUrls.connectUrl;
     openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
     openworkServerState.lanUrl = connectUrls.lanUrl;
@@ -1437,6 +1455,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     Object.assign(engineState, createEngineState());
     Object.assign(openworkServerState, createOpenworkServerState());
     Object.assign(orchestratorState, createOrchestratorState());
+    serverStorageAttestation = null;
   }
 
   async function prepareFreshRuntime() {
@@ -1479,7 +1498,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // prepareFreshRuntime (killing the freshly bound server) and then rebinds
     // the sticky preferred port, racing the not-yet-released socket into
     // EADDRINUSE and leaving the runtime in error -> boot screen.
-    const requestedRemoteAccess = options.openworkRemoteAccess === true;
+    const requestedRemoteAccess = resolveRuntimeRemoteAccessEnabled(
+      options.openworkRemoteAccess,
+      allowRemoteAccess,
+    );
     if (
       options.forceRestart !== true &&
       openworkServerState.inProcess &&
@@ -1512,7 +1534,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       await ensureOpenwork({
         projectDir: safeProjectDir,
         workspacePaths,
-        remoteAccessEnabled: options.openworkRemoteAccess === true,
+        remoteAccessEnabled: requestedRemoteAccess,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -1537,9 +1559,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
     }
-    const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
-      ? options.openworkRemoteAccess
-      : openworkServerState.remoteAccessEnabled;
+    const openworkRemoteAccess = resolveRuntimeRemoteAccessEnabled(
+      typeof options.openworkRemoteAccess === "boolean"
+        ? options.openworkRemoteAccess
+        : openworkServerState.remoteAccessEnabled,
+      allowRemoteAccess,
+    );
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
@@ -1558,6 +1583,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       lifecycleState,
       engine: await engineInfo(),
       openworkServer: snapshotOpenworkServerState(openworkServerState),
+      storage: serverStorageAttestation,
     };
   }
 
@@ -1575,7 +1601,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
-      remoteAccessEnabled: options.remoteAccessEnabled === true,
+      remoteAccessEnabled: resolveRuntimeRemoteAccessEnabled(
+        options.remoteAccessEnabled,
+        allowRemoteAccess,
+      ),
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });

@@ -3,6 +3,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 import { runtimeStorageDir } from "./runtime-db.js";
+import {
+  legacyOpenWorkImportEnabled,
+  type ServerProductPolicy,
+} from "./product-policy.js";
 import type { ServerConfig } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
 
@@ -16,12 +20,14 @@ export type LegacyConfigSweepState = {
   version: 1;
   sweptAt: string;
   files: LegacyConfigSweepFile[];
+  skipped?: "feature_disabled";
   error?: string;
 };
 
 export type LegacyConfigSweepOptions = {
   homeDir?: string;
   now?: Date;
+  productPolicy?: ServerProductPolicy;
 };
 
 const OPENWORK_PLUGIN_MARKERS = [
@@ -141,6 +147,7 @@ function normalizeSweepState(value: unknown): LegacyConfigSweepState | null {
     version: 1,
     sweptAt: value.sweptAt,
     files,
+    ...(value.skipped === "feature_disabled" ? { skipped: value.skipped } : {}),
     ...(typeof value.error === "string" ? { error: value.error } : {}),
   };
 }
@@ -164,10 +171,19 @@ export async function sweepLegacyOpenCodeConfig(
   config: ServerConfig,
   options?: LegacyConfigSweepOptions,
 ): Promise<LegacyConfigSweepState> {
+  const now = options?.now ?? new Date();
+  if (!legacyOpenWorkImportEnabled(options?.productPolicy)) {
+    return {
+      version: 1,
+      sweptAt: now.toISOString(),
+      files: [],
+      skipped: "feature_disabled",
+    };
+  }
+
   const existing = await readLegacyConfigSweepState(config);
   if (existing && !existing.error) return existing;
 
-  const now = options?.now ?? new Date();
   const state: LegacyConfigSweepState = {
     version: 1,
     sweptAt: now.toISOString(),

@@ -1,11 +1,13 @@
 import { dirname, join } from "node:path";
 import { appendFile, readFile } from "node:fs/promises";
 import { openworkServerDataDir } from "@openwork/paths";
+import { resolveLocalStorageLayoutPath } from "./storage-layout-env.js";
 import type { AuditEntry } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
 
 function resolveOpenworkDataDir(): string {
-  return openworkServerDataDir();
+  return resolveLocalStorageLayoutPath("OPENWORK_DATA_DIR")
+    ?? openworkServerDataDir();
 }
 
 export function auditLogPath(workspaceId: string): string {

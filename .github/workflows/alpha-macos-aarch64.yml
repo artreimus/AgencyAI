@@ -1,26 +1,16 @@
-name: Alpha Channel (macOS arm64)
+name: Legacy Alpha Channel (upstream compatibility only)
 
-# Every merge to `dev` publishes a fresh macOS arm64 build to the OpenWork
-# alpha release channel.
-#
-# The alpha channel is macOS-only today. It lives as a rolling GitHub
-# release. Each run also updates a small manifest on the fixed
-# `alpha-macos-latest` release so the Electron updater feed stays stable while
-# historical alpha artifacts remain available.
-#
-# See:
-#   - ARCHITECTURE.md#release-channels
-#   - .github/workflows/release-macos-aarch64.yml (stable channel)
+# This inherited workflow is retained for upstream comparison, not as the
+# AgencyAI release lane. It has no automatic trigger and is fail-closed:
+# only different-ai/openwork can opt in to a manual run. PR07 will introduce
+# a separate AgencyAI release lane after the local desktop MVP is validated.
 
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
     inputs:
-      publish_pointer:
-        description: "Update alpha-macos-latest (leave off for isolated branch validation)"
-        required: false
+      enable_legacy_upstream_publish:
+        description: "Allow the inherited workflow to publish from different-ai/openwork only"
+        required: true
         type: boolean
         default: false
 
@@ -31,15 +21,21 @@ concurrency:
   group: alpha-macos-aarch64-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_PRODUCT_PROFILE: local-mvp
+  VITE_OPENWORK_POSTHOG_KEY: ""
+
 jobs:
   publish-alpha-macos-aarch64:
     name: Build + Publish alpha (aarch64-apple-darwin)
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      inputs.enable_legacy_upstream_publish == true
     runs-on: macos-14
     timeout-minutes: 180
 
     env:
-      ALPHA_RELEASE_TAG: alpha-macos-latest
-      ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
       # Apple signing + notarization are required so alpha bundles install
       # and launch without Gatekeeper friction. Alpha builds are served
       # from GitHub Releases like stable, just from a different tag.
@@ -170,7 +166,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config electron-builder.config.cjs \
             --mac \
             --arm64 \
             --publish never
@@ -184,19 +180,19 @@ jobs:
           ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
         run: |
           set -euo pipefail
-          body="Rolling alpha build for OpenWork (macOS arm64) from ${GITHUB_SHA}."
+          body="AgencyAI alpha build for macOS arm64 from ${GITHUB_SHA}. Upgrades are manual."
           if gh release view "$ALPHA_RUN_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Alpha prerelease $ALPHA_RUN_RELEASE_TAG already exists; reusing it."
             exit 0
           fi
           gh release create "$ALPHA_RUN_RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "OpenWork Alpha ${ALPHA_VERSION}" \
+            --title "AgencyAI Alpha ${ALPHA_VERSION}" \
             --notes "$body" \
             --target "$GITHUB_SHA" \
             --prerelease
 
-      - name: Upload Electron alpha updater assets
+      - name: Upload AgencyAI alpha installers
         if: env.MACOS_NOTARIZE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,49 +201,13 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(
-            apps/desktop/dist-electron/*.dmg
-            apps/desktop/dist-electron/*.zip
-            apps/desktop/dist-electron/*.blockmap
-            apps/desktop/dist-electron/latest-mac.yml
+            apps/desktop/dist-electron/agencyai-*.dmg
+            apps/desktop/dist-electron/agencyai-*.zip
           )
           if [ ${#assets[@]} -eq 0 ]; then
             echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
             exit 1
           fi
           gh release upload "$ALPHA_RUN_RELEASE_TAG" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-      - name: Update alpha updater pointer
-        if: env.MACOS_NOTARIZE == 'true' && (github.event_name == 'push' || inputs.publish_pointer == true)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          POINTER_MANIFEST="$RUNNER_TEMP/latest-mac.yml"
-          export POINTER_MANIFEST
-          node <<'NODE'
-          const fs = require("node:fs");
-          const manifestPath = "apps/desktop/dist-electron/latest-mac.yml";
-          const releaseTag = process.env.ALPHA_RUN_RELEASE_TAG;
-          const baseUrl = `https://github.com/different-ai/openwork/releases/download/${releaseTag}`;
-          const rewritten = fs.readFileSync(manifestPath, "utf8")
-            .replace(/(url:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`)
-            .replace(/(path:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`);
-          fs.writeFileSync(process.env.POINTER_MANIFEST, rewritten);
-          NODE
-
-          if ! gh release view "$ALPHA_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$ALPHA_RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$ALPHA_RELEASE_NAME" \
-              --notes "Stable Electron updater pointer for the newest macOS arm64 alpha prerelease." \
-              --target "$GITHUB_SHA" \
-              --prerelease
-          fi
-
-          gh release upload "$ALPHA_RELEASE_TAG" "$POINTER_MANIFEST#latest-mac.yml" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

@@ -1,8 +1,7 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
@@ -90,6 +89,10 @@ import {
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
+import {
+  resolveMcpAuthStorePath,
+  resolveProfileGlobalOpencodeConfigPath,
+} from "./storage-layout-env.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -2568,7 +2571,7 @@ function createRoutes(
     const name = String(ctx.params.name ?? "").trim();
     validateMcpName(name);
 
-    const authStorePath = join(homedir(), ".config", "opencode", "mcp-auth.json");
+    const authStorePath = resolveMcpAuthStorePath();
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "mcp.auth.remove",
@@ -3055,7 +3058,7 @@ function normalizeOpencodeScope(value: string | null | undefined): "project" | "
 }
 
 export function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
-  if (scope === "global") return resolveGlobalOpencodeConfigPath();
+  if (scope === "global") return resolveProfileGlobalOpencodeConfigPath();
   return opencodeConfigPath(workspaceRoot);
 }
 

@@ -1,12 +1,12 @@
 import { readdir, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { CommandItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { projectCommandsDir } from "./workspace-files.js";
 import { validateCommandName, sanitizeCommandName } from "./validators.js";
 import { ApiError } from "./errors.js";
+import { resolveProfileGlobalOpencodeConfigDir } from "./storage-layout-env.js";
 
 function normalizeCommandFrontmatter(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -60,7 +60,10 @@ async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Pr
 
 export async function listCommands(workspaceRoot: string, scope: "workspace" | "global"): Promise<CommandItem[]> {
   if (scope === "global") {
-    const dir = join(homedir(), ".config", "opencode", "commands");
+    const dir = join(
+      resolveProfileGlobalOpencodeConfigDir(),
+      "commands",
+    );
     return listCommandsInDir(dir, "global");
   }
   return listCommandsInDir(projectCommandsDir(workspaceRoot), "workspace");

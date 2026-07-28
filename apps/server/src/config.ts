@@ -1,5 +1,9 @@
 import { dirname, resolve } from "node:path";
 import { openworkServerConfigPath } from "@openwork/paths";
+import {
+  LocalStorageLayoutError,
+  resolveLocalStorageLayoutPath,
+} from "./storage-layout-env.js";
 import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
@@ -207,7 +211,21 @@ async function loadFileConfig(configPath: string): Promise<FileConfig> {
 }
 
 export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
-  const configPath = cli.configPath ?? openworkServerConfigPath();
+  const localConfigPath = resolveLocalStorageLayoutPath(
+    "OPENWORK_SERVER_CONFIG",
+  );
+  if (
+    localConfigPath
+    && cli.configPath
+    && resolve(cli.configPath) !== localConfigPath
+  ) {
+    throw new LocalStorageLayoutError(
+      "local-mvp server config must match OPENWORK_SERVER_CONFIG",
+    );
+  }
+  const configPath = localConfigPath
+    ?? cli.configPath
+    ?? openworkServerConfigPath();
   const fileConfig = await loadFileConfig(configPath);
   const configDir = dirname(configPath);
 

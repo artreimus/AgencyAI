@@ -42,6 +42,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve release + platforms
+    if: github.repository == 'different-ai/openwork'
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}

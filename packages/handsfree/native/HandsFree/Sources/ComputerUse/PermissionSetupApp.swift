@@ -16,6 +16,15 @@ struct ComputerUsePermissionStatus {
     }
 }
 
+private enum ComputerUseProductIdentity {
+    static let displayName =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+        ?? "Computer Use"
+    static let parentProductName =
+        Bundle.main.object(forInfoDictionaryKey: "ComputerUseParentProductName") as? String
+        ?? "the desktop app"
+}
+
 enum ComputerUsePermissions {
     /// Non-prompting check — safe to call on a timer / from HTTP polling.
     static func status() -> ComputerUsePermissionStatus {
@@ -66,7 +75,7 @@ private final class PermissionSetupWindow: NSWindow {
             backing: .buffered,
             defer: false
         )
-        title = "OpenWork Computer Use"
+        title = ComputerUseProductIdentity.displayName
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
@@ -136,7 +145,11 @@ final class PermissionSetupViewController: NSViewController {
         let axCard = makeAccessibilityCard()
         let srCard = makeScreenRecordingCard()
 
-        let doneBtn = NSButton(title: "Done — Return to OpenWork", target: self, action: #selector(done))
+        let doneBtn = NSButton(
+            title: "Done — Return to \(ComputerUseProductIdentity.parentProductName)",
+            target: self,
+            action: #selector(done)
+        )
         doneBtn.bezelStyle = .rounded
         doneBtn.controlSize = .large
         doneBtn.keyEquivalent = "\r"
@@ -589,5 +602,4 @@ final class DraggableAppIconView: NSImageView, NSDraggingSource {
         .copy
     }
 }
-
 

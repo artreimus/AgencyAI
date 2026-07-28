@@ -134,6 +134,8 @@ test("the test action contains the complete fast verification matrix", () => {
       "pnpm --filter openwork-server test",
       "pnpm --filter @openwork/desktop typecheck:electron",
       "pnpm --filter @openwork/desktop test",
+      "pnpm run evals:typecheck",
+      "pnpm run test:eval-runner",
       "pnpm --filter openwork-server build",
       "pnpm --filter @openwork/app build",
       "pnpm --filter @openwork/desktop check:electron",

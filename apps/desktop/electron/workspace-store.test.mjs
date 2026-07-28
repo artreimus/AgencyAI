@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, utimes, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { resolveStorageLayout } from "./storage-layout.mjs";
 
 function restoreEnv(name, value) {
   if (value === undefined) delete process.env[name];
@@ -673,4 +674,133 @@ test("clearDesktopBootstrapConfig removes bootstrap files without deleting works
     assert.equal(config.requireSignin, false);
     assert.equal(config.fromFile, false);
   });
+});
+
+test("local-mvp storage ignores legacy bootstrap, migration, recovery, and import state", async () => {
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "agencyai-coexistence-"));
+  const previousBootstrapOverride = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  const previousBundleOverride = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
+  try {
+    const appDataPath = path.join(fixtureRoot, "app-data");
+    const layout = resolveStorageLayout({
+      appDataPath,
+      appIdentifier: "com.artreimus.agencyai",
+    });
+    const upstreamRoot = path.join(fixtureRoot, "upstream");
+    const upstreamBootstrap = path.join(
+      upstreamRoot,
+      ".config",
+      "openwork",
+      "desktop-bootstrap.json",
+    );
+    const upstreamOpencode = path.join(
+      upstreamRoot,
+      ".config",
+      "opencode",
+      "opencode.jsonc",
+    );
+    const bundleRoot = path.join(fixtureRoot, "Downloads");
+    const bundleBootstrap = path.join(bundleRoot, "desktop-bootstrap.json");
+    const legacyWorkspaceState = path.join(layout.userData, "workspace-state.json");
+    const tokenStore = path.join(layout.userData, "openwork-server-tokens.json");
+    const serverConfig = path.join(layout.openworkConfig, "server.json");
+    const recoveredWorkspace = path.join(fixtureRoot, "legacy-workspace");
+    const importTarget = path.join(fixtureRoot, "import-target");
+
+    await Promise.all([
+      mkdir(path.dirname(upstreamBootstrap), { recursive: true }),
+      mkdir(path.dirname(upstreamOpencode), { recursive: true }),
+      mkdir(bundleRoot, { recursive: true }),
+      mkdir(layout.userData, { recursive: true }),
+      mkdir(layout.openworkConfig, { recursive: true }),
+      mkdir(recoveredWorkspace, { recursive: true }),
+    ]);
+    await writeFile(upstreamBootstrap, '{"baseUrl":"https://legacy.example.test"}\n', "utf8");
+    await writeFile(upstreamOpencode, '{"plugin":["legacy-plugin"]}\n', "utf8");
+    await writeFile(bundleBootstrap, '{"baseUrl":"https://bundle.example.test"}\n', "utf8");
+    await writeFile(
+      path.join(bundleRoot, "openwork-mac-arm64-9.9.9.dmg"),
+      "legacy installer",
+      "utf8",
+    );
+    await writeFile(
+      legacyWorkspaceState,
+      JSON.stringify({
+        selectedId: "ws_legacy",
+        workspaces: [{ id: "ws_legacy", path: recoveredWorkspace }],
+      }),
+      "utf8",
+    );
+    await writeFile(
+      tokenStore,
+      JSON.stringify({ version: 1, workspaces: { [recoveredWorkspace]: { updatedAt: 1 } } }),
+      "utf8",
+    );
+    await writeFile(
+      serverConfig,
+      JSON.stringify({ workspaces: [{ path: recoveredWorkspace, name: "Legacy" }] }),
+      "utf8",
+    );
+
+    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = upstreamBootstrap;
+    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleRoot;
+    /** @type {Map<string, Buffer>} */
+    const before = new Map();
+    for (const filePath of [
+      upstreamBootstrap,
+      upstreamOpencode,
+      bundleBootstrap,
+      legacyWorkspaceState,
+      tokenStore,
+      serverConfig,
+    ]) {
+      before.set(filePath, await readFile(filePath));
+    }
+    const app = {
+      getPath(name) {
+        if (name === "userData") return layout.userData;
+        throw new Error(`local-mvp must not inspect Electron ${name}`);
+      },
+    };
+    const store = createWorkspaceStore({
+      app,
+      defaultDenBaseUrl: "http://127.0.0.1:4096",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+      storageLayout: layout,
+      legacyOpenWorkImport: false,
+    });
+
+    assert.equal(await store.migrateLegacyElectronWorkspaceStateIfNeeded(), false);
+    assert.equal(await store.importBundledDesktopBootstrapConfigIfPreferred(), false);
+    assert.deepEqual(await store.readWorkspaceState(), {
+      selectedId: "",
+      watchedId: null,
+      activeId: null,
+      workspaces: [],
+    });
+    assert.deepEqual(await store.importConfig({
+      archivePath: path.join(fixtureRoot, "legacy.openwork"),
+      targetDir: importTarget,
+    }), {
+      ok: false,
+      code: "feature_disabled",
+    });
+    assert.deepEqual(await store.getDesktopBootstrapConfig(), {
+      baseUrl: "http://127.0.0.1:4096",
+      requireSignin: false,
+      fromFile: false,
+    });
+
+    await assert.rejects(access(path.join(layout.userData, "openwork-workspaces.json")));
+    await assert.rejects(access(layout.bootstrap));
+    await assert.rejects(access(importTarget));
+    for (const [filePath, expected] of before) {
+      assert.deepEqual(await readFile(filePath), expected, `${filePath} changed`);
+    }
+  } finally {
+    restoreEnv("OPENWORK_DESKTOP_BOOTSTRAP_PATH", previousBootstrapOverride);
+    restoreEnv("OPENWORK_BOOTSTRAP_BUNDLE_DIR", previousBundleOverride);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 });

@@ -2,27 +2,30 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const computerUseHelperAppName = "OpenWork Computer Use.app";
-
 const sidecarBases = [
   "opencode",
-  "openwork-server",
   "openwork-orchestrator",
-  "chrome-devtools-mcp",
 ];
 
+function normalizeArch(arch) {
+  if (arch === 1 || arch === "x64") return "x64";
+  if (arch === 3 || arch === "arm64") return "arm64";
+  return null;
+}
+
 function targetTriple(platformName, arch) {
+  const normalizedArch = normalizeArch(arch);
   if (platformName === "darwin") {
-    if (arch === "arm64") return "aarch64-apple-darwin";
-    if (arch === "x64") return "x86_64-apple-darwin";
+    if (normalizedArch === "arm64") return "aarch64-apple-darwin";
+    if (normalizedArch === "x64") return "x86_64-apple-darwin";
   }
   if (platformName === "linux") {
-    if (arch === "arm64") return "aarch64-unknown-linux-gnu";
-    if (arch === "x64") return "x86_64-unknown-linux-gnu";
+    if (normalizedArch === "arm64") return "aarch64-unknown-linux-gnu";
+    if (normalizedArch === "x64") return "x86_64-unknown-linux-gnu";
   }
   if (platformName === "win32") {
-    if (arch === "arm64") return "aarch64-pc-windows-msvc";
-    if (arch === "x64") return "x86_64-pc-windows-msvc";
+    if (normalizedArch === "arm64") return "aarch64-pc-windows-msvc";
+    if (normalizedArch === "x64") return "x86_64-pc-windows-msvc";
   }
   return null;
 }
@@ -47,7 +50,7 @@ function resolveMacAppPath(context) {
   return fallback ? path.join(context.appOutDir, fallback) : null;
 }
 
-function signComputerUseHelper(context) {
+function signComputerUseHelper(context, computerUseHelperAppName) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
 
@@ -121,8 +124,13 @@ async function afterPack(context) {
     }
   }
 
-  signComputerUseHelper(context);
+  const { getBuildProductProfile } = await import("@openwork/product-config");
+  const productProfile = getBuildProductProfile();
+  signComputerUseHelper(context, productProfile.brand.computerUse.bundleName);
 }
 
 module.exports = afterPack;
 module.exports.default = afterPack;
+module.exports.normalizeArch = normalizeArch;
+module.exports.sidecarBases = sidecarBases;
+module.exports.targetTriple = targetTriple;

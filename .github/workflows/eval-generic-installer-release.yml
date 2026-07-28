@@ -19,6 +19,7 @@ concurrency:
 jobs:
   prepare:
     name: Create isolated prerelease
+    if: github.repository == 'different-ai/openwork'
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.release.outputs.tag }}

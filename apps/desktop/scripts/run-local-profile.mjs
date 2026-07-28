@@ -24,6 +24,8 @@ const actionCommands = Object.freeze({
     ["--filter", "openwork-server", "test"],
     ["--filter", "@openwork/desktop", "typecheck:electron"],
     ["--filter", "@openwork/desktop", "test"],
+    ["run", "evals:typecheck"],
+    ["run", "test:eval-runner"],
     ["--filter", "openwork-server", "build"],
     ["--filter", "@openwork/app", "build"],
     ["--filter", "@openwork/desktop", "check:electron"],

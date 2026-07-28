@@ -6,6 +6,7 @@
  * of owning the process lifecycle.
  */
 import { mkdir } from "node:fs/promises";
+import { isProductFeatureEnabled } from "@openwork/product-config";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import {
@@ -19,6 +20,10 @@ import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
+import {
+  assertLocalStorageLayoutEnvironment,
+  type LocalStorageLayoutAttestation,
+} from "./storage-layout-env.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
@@ -42,11 +47,14 @@ export type EmbeddedServerHandle = {
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
   /** Liveness for the managed OpenCode child process, when spawned. */
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
+  /** Exact path-only environment validated by this embedded server. */
+  storage: LocalStorageLayoutAttestation | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
+  const storage = assertLocalStorageLayoutEnvironment();
   const config = await resolveServerConfig(options);
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
 
@@ -70,7 +78,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
       await mkdir(cwd, { recursive: true });
-      await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+      if (isProductFeatureEnabled("legacyOpenWorkImport")) {
+        await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+      }
       const opencodeModelsUrl = await resolveOpencodeModelsUrl();
 
       managedOpencode = await createManagedOpencodeServer({
@@ -78,6 +88,10 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         excludedPorts: [config.port],
         env: {
+          // Passing the validated path contract explicitly makes the actual
+          // child spawn environment observable in its redacted execution
+          // snapshot instead of relying on ambient process inheritance.
+          ...(storage?.environment ?? {}),
           ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
           ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
           OPENWORK_SERVER_URL: serverUrl,
@@ -133,6 +147,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     managedOpencode: managedOpencode
       ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
       : null,
+    storage,
     async stop() {
       if (managedOpencodeIdentity) {
         clearTrustedOpencodeProcess(config, managedOpencodeIdentity);

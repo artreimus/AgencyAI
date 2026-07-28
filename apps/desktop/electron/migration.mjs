@@ -17,7 +17,17 @@ function migrationSnapshotPath(app, done = false) {
 // into app_data_dir before it kicks off the Electron installer. Electron
 // renders the workspace list / session-by-workspace preferences from it on
 // first boot and then marks it .done so subsequent boots don't re-import.
-export function registerMigrationIpc({ app, ipcMain }) {
+export function registerMigrationIpc({ app, ipcMain, enabled = true }) {
+  if (!enabled) {
+    ipcMain.handle("openwork:migration:read", async () => null);
+    ipcMain.handle("openwork:migration:ack", async () => ({
+      ok: false,
+      moved: false,
+      code: "feature_disabled",
+    }));
+    return { enabled: false };
+  }
+
   ipcMain.handle("openwork:migration:read", async () => {
     const snapshotPath = migrationSnapshotPath(app);
     if (!existsSync(snapshotPath)) return null;
@@ -46,4 +56,6 @@ export function registerMigrationIpc({ app, ipcMain }) {
       return { ok: false, moved: false };
     }
   });
+
+  return { enabled: true };
 }

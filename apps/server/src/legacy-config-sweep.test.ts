@@ -9,10 +9,19 @@ import {
   readLegacyConfigSweepState,
   sweepLegacyOpenCodeConfig,
 } from "./legacy-config-sweep.js";
+import type { ServerProductPolicy } from "./product-policy.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
 const NOW = new Date("2026-07-15T12:34:56Z");
+const LOCAL_MVP_POLICY = {
+  profile: "local-mvp",
+  features: { legacyOpenWorkImport: false },
+} satisfies ServerProductPolicy;
+const UPSTREAM_POLICY = {
+  profile: "upstream",
+  features: { legacyOpenWorkImport: true },
+} satisfies ServerProductPolicy;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -73,6 +82,34 @@ afterEach(async () => {
 });
 
 describe("legacy OpenCode config sweep", () => {
+  test("is side-effect free when legacy import is disabled", async () => {
+    const root = await createRoot();
+    const config = configFor(root);
+    const original = `{ "default_agent": "openwork" }\n`;
+    const path = await writeLegacyFile(
+      root,
+      "opencode.jsonc",
+      original,
+    );
+
+    const before = await readdir(root, { recursive: true });
+    const state = await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: NOW,
+      productPolicy: LOCAL_MVP_POLICY,
+    });
+
+    expect(state).toEqual({
+      version: 1,
+      sweptAt: NOW.toISOString(),
+      files: [],
+      skipped: "feature_disabled",
+    });
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(await readdir(root, { recursive: true })).toEqual(before);
+    expect(await readLegacyConfigSweepState(config)).toBeNull();
+  });
+
   test("removes only OpenWork-managed legacy keys and preserves user content", async () => {
     const root = await createRoot();
     const config = configFor(root);
@@ -97,7 +134,11 @@ describe("legacy OpenCode config sweep", () => {
 `;
     const path = await writeLegacyFile(root, "opencode.jsonc", original);
 
-    const state = await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
+    const state = await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: NOW,
+      productPolicy: UPSTREAM_POLICY,
+    });
     const after = await readFile(path, "utf8");
     const parsed = parseRecord(after);
     const mcp = isRecord(parsed.mcp) ? parsed.mcp : {};
@@ -129,12 +170,20 @@ describe("legacy OpenCode config sweep", () => {
     const config = configFor(root);
     const path = await writeLegacyFile(root, "config.json", `{ "default_agent": "openwork" }\n`);
 
-    await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
+    await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: NOW,
+      productPolicy: UPSTREAM_POLICY,
+    });
     const contentAfterFirstRun = await readFile(path, "utf8");
     const backupsAfterFirstRun = await countBackups(root, "config.json");
     const stateAfterFirstRun = await readFile(legacySweepStatePath(config), "utf8");
 
-    await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: new Date("2026-07-15T13:00:00Z") });
+    await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: new Date("2026-07-15T13:00:00Z"),
+      productPolicy: UPSTREAM_POLICY,
+    });
 
     expect(await readFile(path, "utf8")).toBe(contentAfterFirstRun);
     expect(await countBackups(root, "config.json")).toBe(backupsAfterFirstRun);
@@ -152,7 +201,11 @@ describe("legacy OpenCode config sweep", () => {
 `;
     const path = await writeLegacyFile(root, "opencode.json", original);
 
-    const state = await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
+    const state = await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: NOW,
+      productPolicy: UPSTREAM_POLICY,
+    });
 
     expect(await readFile(path, "utf8")).toBe(original);
     expect(await countBackups(root, "opencode.json")).toBe(0);
@@ -167,7 +220,11 @@ describe("legacy OpenCode config sweep", () => {
     const remainingPath = await writeLegacyFile(root, "opencode.jsonc", `{ "default_agent": "openwork" }\n`);
     await chmod(unwritablePath, 0o444);
 
-    const state = await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
+    const state = await sweepLegacyOpenCodeConfig(config, {
+      homeDir: root,
+      now: NOW,
+      productPolicy: UPSTREAM_POLICY,
+    });
 
     expect(state.error).toBeTruthy();
     expect(await readFile(safePath, "utf8")).toBe(`{ "plugin": ["user-plugin"] }\n`);

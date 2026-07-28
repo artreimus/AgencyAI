@@ -10,7 +10,12 @@ const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 
-export function createApplicationMenu({ appName, docsUrl, getWindow }) {
+export function createApplicationMenu({
+  appName,
+  docsUrl = null,
+  updatesEnabled = true,
+  getWindow,
+}) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
 
@@ -46,6 +51,29 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
 
   function install() {
     const isMac = process.platform === "darwin";
+    const helpItems = [
+      ...(!isMac && updatesEnabled
+        ? [
+            {
+              label: "Check for Updates...",
+              click: () => {
+                void checkForUpdatesFromNativeMenu();
+              },
+            },
+            { type: "separator" },
+          ]
+        : []),
+      ...(docsUrl
+        ? [
+            {
+              label: "Docs",
+              click: async () => {
+                await shell.openExternal(docsUrl);
+              },
+            },
+          ]
+        : []),
+    ];
     const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
       ...(isMac
         ? [
@@ -53,13 +81,17 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
               label: currentAppName,
               submenu: [
                 { role: "about" },
-                {
-                  label: "Check for Updates...",
-                  click: () => {
-                    void checkForUpdatesFromNativeMenu();
-                  },
-                },
-                { type: "separator" },
+                ...(updatesEnabled
+                  ? [
+                      {
+                        label: "Check for Updates...",
+                        click: () => {
+                          void checkForUpdatesFromNativeMenu();
+                        },
+                      },
+                      { type: "separator" },
+                    ]
+                  : []),
                 {
                   label: "Settings...",
                   accelerator: "Command+,",
@@ -191,28 +223,9 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
               ]),
         ],
       },
-      {
-        role: "help",
-        submenu: [
-          ...(isMac
-            ? []
-            : [
-                {
-                  label: "Check for Updates...",
-                  click: () => {
-                    void checkForUpdatesFromNativeMenu();
-                  },
-                },
-                { type: "separator" },
-              ]),
-          {
-            label: "Docs",
-            click: async () => {
-              await shell.openExternal(docsUrl);
-            },
-          },
-        ],
-      },
+      ...(helpItems.length > 0
+        ? [{ role: "help", submenu: helpItems }]
+        : []),
     ]);
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));

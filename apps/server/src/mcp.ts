@@ -1,5 +1,6 @@
 import { minimatch } from "minimatch";
 import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
+import { resolveProfileGlobalOpencodeConfigPath } from "./storage-layout-env.js";
 import type { McpItem, ServerConfig } from "./types.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { readJsoncFile } from "./jsonc.js";
@@ -39,6 +40,13 @@ export function resolveGlobalOpenCodeConfigPath(input?: {
   xdgConfigHome?: string;
   homeDir?: string;
 }): string {
+  if (
+    input?.opencodeConfigDir === undefined
+    && input?.xdgConfigHome === undefined
+    && input?.homeDir === undefined
+  ) {
+    return resolveProfileGlobalOpencodeConfigPath();
+  }
   return resolveGlobalOpencodeConfigPath({
     env: {
       ...process.env,

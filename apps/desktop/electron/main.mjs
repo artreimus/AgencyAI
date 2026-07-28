@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
+import { getBuildProductProfile } from "@openwork/product-config";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
@@ -50,9 +51,20 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { createAppBuildInfo } from "./app-build-info.mjs";
+import { resolveProductArchitectureInfo } from "./architecture-policy.mjs";
+import {
+  applyDesktopProductEnvironmentPolicy,
+  forwardedProductDeepLinks,
+  resolveDesktopProductPolicy,
+} from "./desktop-product-policy.mjs";
+import {
+  applyStorageLayoutEnvironment,
+  ensureStorageLayout,
+  resolveElectronStorageLayout,
+  storageLayoutEnvironment,
+} from "./storage-layout.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -84,25 +96,34 @@ const {
   systemPreferences,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
+const PRODUCT_PROFILE = getBuildProductProfile();
+applyDesktopProductEnvironmentPolicy({
+  productProfile: PRODUCT_PROFILE,
+  isPackaged: app.isPackaged,
+  env: process.env,
+});
+const DYNAMIC_BRANDING_ENABLED = Boolean(
+  PRODUCT_PROFILE.features.dynamicOrgBranding &&
+  PRODUCT_PROFILE.features.remoteAssetFetches,
+);
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
-const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
-const DESKTOP_PROTOCOL_SCHEME = "openwork";
-const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
-const APP_NAME =
-  process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
-  (isDevMode ? "OpenWork - Dev" : "OpenWork");
-let currentDisplayAppName = APP_NAME;
-const BASE_APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
-const APP_IDENTIFIER = resolveAppIdentifier({
-  appIdentifierOverride: process.env.OPENWORK_ELECTRON_APP_IDENTIFIER,
+// The product environment policy above removes the raw development flag for
+// packaged local-mvp before this or any later module can read/forward it.
+const isDevMode = process.env.OPENWORK_DEV_MODE === "1" &&
+  (PRODUCT_PROFILE.profile !== "local-mvp" || !app.isPackaged);
+const DESKTOP_PRODUCT_POLICY = resolveDesktopProductPolicy({
+  productProfile: PRODUCT_PROFILE,
   appRootPath: APP_ROOT,
-  baseAppIdentifier: BASE_APP_IDENTIFIER,
-  devAppIdentifier: DEV_APP_IDENTIFIER,
-  devProfile: process.env.OPENWORK_DEV_PROFILE,
+  env: process.env,
   isDevMode,
   isPackaged: app.isPackaged,
 });
+const APP_IDENTIFIER = DESKTOP_PRODUCT_POLICY.appIdentifier;
+const APP_USER_MODEL_ID = DESKTOP_PRODUCT_POLICY.appUserModelId;
+const APP_NAME = DESKTOP_PRODUCT_POLICY.appName;
+const DESKTOP_PROTOCOL_SCHEME = DESKTOP_PRODUCT_POLICY.protocol;
+const PUBLIC_DEEP_LINKS_ENABLED = DESKTOP_PRODUCT_POLICY.publicDeepLinksEnabled;
+let currentDisplayAppName = APP_NAME;
 if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
@@ -111,12 +132,25 @@ if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
-const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const RELEASE_DOWNLOADS_ENABLED = Boolean(
+  PRODUCT_PROFILE.features.automaticUpdates &&
+  PRODUCT_PROFILE.features.remoteAssetFetches &&
+  PRODUCT_PROFILE.brand.repository,
+);
+const RELEASE_REPOSITORY_URL = RELEASE_DOWNLOADS_ENABLED
+  ? `https://github.com/${PRODUCT_PROFILE.brand.repository.owner}/${PRODUCT_PROFILE.brand.repository.name}/releases`
+  : null;
+const RELEASE_DOWNLOAD_BASE_URL = RELEASE_REPOSITORY_URL
+  ? `${RELEASE_REPOSITORY_URL}/latest/download`
+  : null;
+const RELEASE_PAGE_URL = RELEASE_REPOSITORY_URL
+  ? `${RELEASE_REPOSITORY_URL}/latest`
+  : null;
+const DOCS_PAGE_URL = PRODUCT_PROFILE.brand.docsUrl;
 const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
+  updatesEnabled: PRODUCT_PROFILE.features.automaticUpdates,
   getWindow: () => createMainWindow(),
 });
 
@@ -161,24 +195,33 @@ function killTerminalsForWebContents(webContentsId) {
   }
 }
 
-// Production Electron shares the same on-disk state folder as the Tauri shell
-// so in-place migration is a no-op for almost every file. Dev mode uses the
-// separate dev identifier so it can run beside the production app.
-//
-// Dev profile precedence: OPENWORK_ELECTRON_USERDATA (explicit profile path)
-// wins over everything; then OPENWORK_ELECTRON_APP_IDENTIFIER; then
-// OPENWORK_DEV_PROFILE in unpackaged dev; then the legacy identifier default.
+// Resolve and create every application-owned path before Electron becomes
+// ready. Packaged local-mvp builds ignore inherited path overrides; unpackaged
+// development and tests may explicitly inject an isolated storage/userData
+// root through the two documented OPENWORK_ELECTRON_* variables.
 app.setName(APP_NAME);
-app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
+app.setAppUserModelId(APP_USER_MODEL_ID);
+if (
+  DESKTOP_PROTOCOL_SCHEME &&
+  app.isPackaged &&
+  process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
+) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
-const userDataPath = resolveUserDataPath({
+const storageLayout = resolveElectronStorageLayout({
   appDataPath: app.getPath("appData"),
   appIdentifier: APP_IDENTIFIER,
-  userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
+  env: process.env,
+  isPackaged: app.isPackaged,
+  productProfile: PRODUCT_PROFILE.profile,
+  platform: process.platform,
 });
-app.setPath("userData", userDataPath);
+await ensureStorageLayout(storageLayout);
+applyStorageLayoutEnvironment(process.env, storageLayout);
+app.setPath("userData", storageLayout.userData);
+app.setPath("sessionData", storageLayout.sessionData);
+app.setAppLogsPath(storageLayout.logs);
+app.setPath("crashDumps", storageLayout.crashDumps);
 
 // Resolve and cache the app icon (reused for BrowserWindow + mac dock).
 // Packaged builds ship icons via electron-builder config, but for `dev:electron`
@@ -258,12 +301,6 @@ function updaterManifestName(arch) {
   return arch === "arm64" ? "latest-linux-arm64.yml" : "latest-linux.yml";
 }
 
-function archLabel(arch) {
-  if (arch === "arm64") return "ARM";
-  if (arch === "x64") return "Intel";
-  return arch;
-}
-
 function parseUpdaterManifestFiles(raw) {
   const files = [];
   let current = null;
@@ -296,6 +333,7 @@ function selectDownloadFile(files, arch) {
 }
 
 async function resolveCorrectArchitectureDownloadUrl(arch) {
+  if (!RELEASE_DOWNLOAD_BASE_URL) return null;
   const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -322,21 +360,22 @@ async function resolveArchitectureInfo() {
   const appArch = normalizeRuntimeArch(process.arch);
   const systemArch = resolveSystemArch();
   const version = app.getVersion();
-  const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
-  const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
-  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
-  const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
-  return {
+  return resolveProductArchitectureInfo({
     appArch,
-    appArchLabel: archLabel(appArch),
     systemArch,
-    systemArchLabel: archLabel(systemArch),
-    mismatch: appArch !== systemArch && hasCorrectArchitectureDownload,
-    platform: process.platform === "win32" ? "windows" : process.platform,
+    platform: process.platform,
     version,
-    downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
+    automaticUpdates: PRODUCT_PROFILE.features.automaticUpdates,
+    remoteAssetFetches: PRODUCT_PROFILE.features.remoteAssetFetches,
+    resolveDownloadUrl: resolveCorrectArchitectureDownloadUrl,
+    fallbackDownloadUrl: (targetArch) => {
+      if (!RELEASE_DOWNLOAD_BASE_URL) return null;
+      const assetName =
+        `${PRODUCT_PROFILE.brand.artifactPrefix}-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
+      return `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`;
+    },
     releaseUrl: RELEASE_PAGE_URL,
-  };
+  });
 }
 
 const APP_ICON_PATH = resolveAppIconPath();
@@ -455,6 +494,7 @@ async function removeWindowsBrandShortcut() {
 }
 
 function resolveBrandIconImage() {
+  if (!DYNAMIC_BRANDING_ENABLED) return null;
   try {
     const cachePath = brandIconCachePath();
     if (!existsSync(cachePath)) return null;
@@ -609,6 +649,7 @@ function showDesktopNotification(input) {
 }
 
 async function readBrandIconSidecar() {
+  if (!DYNAMIC_BRANDING_ENABLED) return null;
   try {
     const parsed = JSON.parse(await readFile(brandIconSidecarPath(), "utf8"));
     return parsed && typeof parsed === "object" ? parsed : null;
@@ -945,7 +986,9 @@ const pendingDeepLinks = [];
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
-  onDeepLink: (urls) => queueDeepLinks(urls),
+  onDeepLink: PUBLIC_DEEP_LINKS_ENABLED
+    ? (urls) => queueDeepLinks(urls)
+    : null,
 });
 
 const workspaceStore = createWorkspaceStore({
@@ -953,17 +996,31 @@ const workspaceStore = createWorkspaceStore({
   defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
+  storageLayout,
+  legacyOpenWorkImport: PRODUCT_PROFILE.features.legacyOpenWorkImport,
 });
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
 });
 
+/** @returns {import("@openwork/types/connect-link").ConnectLinkVerifyFailure} */
+function disabledConnectLinkResult() {
+  return {
+    ok: false,
+    code: "unavailable",
+    message: "Connect links are disabled in this product.",
+  };
+}
+
 /**
  * @param {string} rawUrl
  * @returns {import("@openwork/types/connect-link").ConnectLinkVerifyResult}
  */
 function verifyConnectLink(rawUrl) {
+  if (!PRODUCT_PROFILE.features.connectLinks) {
+    return disabledConnectLinkResult();
+  }
   return verifyConnectLinkUrl(String(rawUrl ?? ""), {
     publicKeys: resolveConnectLinkPublicKeys(),
     // http is refused everywhere except loopback targets in dev runs.
@@ -972,6 +1029,9 @@ function verifyConnectLink(rawUrl) {
 }
 
 async function previewConnectLink(rawUrl) {
+  if (!PRODUCT_PROFILE.features.connectLinks) {
+    return disabledConnectLinkResult();
+  }
   if (extractConnectExchange(rawUrl)) {
     return resolveConnectExchangeUrl(rawUrl, {
       mode: "preview",
@@ -983,6 +1043,9 @@ async function previewConnectLink(rawUrl) {
 }
 
 async function acceptConnectLink(rawUrl) {
+  if (!PRODUCT_PROFILE.features.connectLinks) {
+    return disabledConnectLinkResult();
+  }
   if (extractConnectExchange(rawUrl)) {
     return resolveConnectExchangeUrl(rawUrl, {
       mode: "exchange",
@@ -1008,19 +1071,11 @@ function normalizePlatform(value) {
 }
 
 function forwardedDeepLinks(argv) {
-  return argv
-    .slice(1)
-    .map((entry) => entry.trim())
-    .filter(
-      (entry) =>
-        entry.startsWith("openwork://") ||
-        entry.startsWith("openwork-dev://") ||
-        entry.startsWith("https://") ||
-        entry.startsWith("http://"),
-    );
+  return forwardedProductDeepLinks(argv, DESKTOP_PROTOCOL_SCHEME);
 }
 
 function queueDeepLinks(urls) {
+  if (!PUBLIC_DEEP_LINKS_ENABLED) return;
   const nextUrls = urls.filter(Boolean);
   if (nextUrls.length === 0) return;
   pendingDeepLinks.push(...nextUrls);
@@ -1030,6 +1085,7 @@ function queueDeepLinks(urls) {
 }
 
 function flushPendingDeepLinks() {
+  if (!PUBLIC_DEEP_LINKS_ENABLED) return;
   if (!mainWindow?.webContents || pendingDeepLinks.length === 0) return;
   const urls = pendingDeepLinks.splice(0, pendingDeepLinks.length);
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
@@ -1108,6 +1164,9 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  storageLayout,
+  storageEnvironment: storageLayoutEnvironment(storageLayout),
+  allowRemoteAccess: PRODUCT_PROFILE.features.remoteAccess,
 });
 
 let runtimeDisposedForQuit = false;
@@ -1725,6 +1784,14 @@ const desktopCommandHandlers = {
       return { ok: true, config };
   },
   "nukeOpenworkAndOpencodeConfigPreview": async (event, ...args) => {
+      if (!PRODUCT_PROFILE.features.freshStart) {
+        return {
+          deletePaths: [],
+          bootstrapPath: storageLayout.bootstrap,
+          preserveBootstrapPath: storageLayout.bootstrap,
+          partitions: [],
+        };
+      }
       return buildNukeManifest({
         env: process.env,
         homedir: os.homedir(),
@@ -1735,6 +1802,20 @@ const desktopCommandHandlers = {
       });
   },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
+      if (!PRODUCT_PROFILE.features.freshStart) {
+        return {
+          deleted: [],
+          pendingRetry: [],
+          errors: [{
+            path: storageLayout.root,
+            message: "Fresh Start is disabled in this product.",
+            code: "feature_disabled",
+          }],
+          preservedBootstrap: true,
+          relaunchMode: "direct",
+          workerScheduled: false,
+        };
+      }
       return executeNukeFreshStart({
         app,
         session,
@@ -1948,6 +2029,9 @@ const desktopCommandHandlers = {
       }
   },
   "__applyBrandAppName": async (event, ...args) => {
+    if (!PRODUCT_PROFILE.features.dynamicOrgBranding) {
+      return { ok: true, appName: APP_NAME };
+    }
     currentDisplayAppName = applyBrandAppName(args[0], {
       fallbackName: APP_NAME,
       platform: process.platform,
@@ -1963,6 +2047,12 @@ const desktopCommandHandlers = {
     return { ok: true, appName: currentDisplayAppName };
   },
   "__applyBrandIcon": async (event, ...args) => {
+      if (
+        !PRODUCT_PROFILE.features.dynamicOrgBranding ||
+        !PRODUCT_PROFILE.features.remoteAssetFetches
+      ) {
+        return { ok: false, reason: "feature_disabled" };
+      }
       const value = args[0] === null ? null : String(args[0] ?? "");
       return applyBrandIconUrl(value);
   },
@@ -2400,8 +2490,17 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 
 browserPanel.registerIpc(ipcMain);
 
-registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
+registerMigrationIpc({
+  app,
+  ipcMain,
+  enabled: PRODUCT_PROFILE.features.legacyOpenWorkImport,
+});
+const { ensureAutoUpdater } = registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow: () => mainWindow,
+  enabled: PRODUCT_PROFILE.features.automaticUpdates,
+});
 
 if (!app.requestSingleInstanceLock()) {
   if (isDevMode && !app.isPackaged) {
@@ -2431,33 +2530,44 @@ or use: pnpm dev:worktree`);
     }
     win.show();
     win.focus();
-    queueDeepLinks(forwardedDeepLinks(argv));
+    if (PUBLIC_DEEP_LINKS_ENABLED) {
+      queueDeepLinks(forwardedDeepLinks(argv));
+    }
   });
 
-  app.on("open-url", async (event, url) => {
-    event.preventDefault();
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
-    queueDeepLinks([url]);
-  });
+  if (PUBLIC_DEEP_LINKS_ENABLED) {
+    app.on("open-url", async (event, url) => {
+      event.preventDefault();
+      const win = await createMainWindow();
+      if (win.isMinimized()) {
+        win.restore();
+      }
+      win.show();
+      win.focus();
+      queueDeepLinks([url]);
+    });
+  }
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
-    await runPendingNukeCleanup({
-      env: process.env,
-      homedir: os.homedir(),
-      platform: process.platform,
-      userDataPath: app.getPath("userData"),
-    }).catch((error) => {
-      console.warn("[nuke] pending cleanup failed", error);
-    });
-    await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
+    if (PRODUCT_PROFILE.features.freshStart) {
+      await runPendingNukeCleanup({
+        env: process.env,
+        homedir: os.homedir(),
+        platform: process.platform,
+        userDataPath: app.getPath("userData"),
+      }).catch((error) => {
+        console.warn("[nuke] pending cleanup failed", error);
+      });
+    }
+    if (PRODUCT_PROFILE.features.legacyOpenWorkImport) {
+      await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
+    }
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
+    const bootstrapBrandAppName = PRODUCT_PROFILE.features.dynamicOrgBranding
+      ? bootstrapConfig.brandAppName
+      : null;
+    currentDisplayAppName = applyBrandAppName(bootstrapBrandAppName, {
       fallbackName: APP_NAME,
       platform: process.platform,
       updateElectronAppName: true,
@@ -2468,16 +2578,19 @@ or use: pnpm dev:worktree`);
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
-    if (process.platform !== "linux") {
+    if (
+      PRODUCT_PROFILE.features.dynamicOrgBranding &&
+      PRODUCT_PROFILE.features.remoteAssetFetches &&
+      process.platform !== "linux"
+    ) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 
-    // Use Tauri's existing workspace state file as canonical so rollback and
-    // Electron see the same workspace list. Import the short-lived
-    // Electron-only filename only when the shared file is missing.
-    await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    if (PRODUCT_PROFILE.features.legacyOpenWorkImport) {
+      await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    }
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
@@ -2486,9 +2599,15 @@ or use: pnpm dev:worktree`);
       error: error instanceof Error ? error.message : String(error),
     }));
 
-    queueDeepLinks(forwardedDeepLinks(process.argv));
+    if (PUBLIC_DEEP_LINKS_ENABLED) {
+      queueDeepLinks(forwardedDeepLinks(process.argv));
+    }
     const win = await createMainWindow();
-    if (process.platform === "linux") {
+    if (
+      PRODUCT_PROFILE.features.dynamicOrgBranding &&
+      PRODUCT_PROFILE.features.remoteAssetFetches &&
+      process.platform === "linux"
+    ) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     win.webContents.on("did-finish-load", () => {
@@ -2498,7 +2617,9 @@ or use: pnpm dev:worktree`);
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.
-    void ensureAutoUpdater();
+    if (PRODUCT_PROFILE.features.automaticUpdates) {
+      void ensureAutoUpdater();
+    }
   });
 
   app.on("activate", async () => {

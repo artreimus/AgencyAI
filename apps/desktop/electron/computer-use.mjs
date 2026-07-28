@@ -8,10 +8,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { app, shell } from "electron";
+import { getBuildProductProfile } from "@openwork/product-config";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
+const productProfile = getBuildProductProfile();
+const COMPUTER_USE_HELPER_APP_NAME = productProfile.brand.computerUse.bundleName;
+const COMPUTER_USE_HELPER_DISPLAY_NAME = productProfile.brand.computerUse.displayName;
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
 function computerUseHelperExecutablePath() {
@@ -41,7 +44,9 @@ function getComputerUseMcpCommand() {
   if (helperExecutable) return [helperExecutable, "mcp"];
 
   if (app.isPackaged) {
-    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
+    throw new Error(
+      `${COMPUTER_USE_HELPER_DISPLAY_NAME} is missing from this ${productProfile.brand.name} build.`,
+    );
   }
 
   if (process.env.OPENWORK_DEV_MODE === "1") {
