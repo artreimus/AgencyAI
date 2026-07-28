@@ -275,6 +275,16 @@ for (const name of [
 }
 
 const productionPackaging = process.env.OPENWORK_RELEASE_BUILD === "1";
+const releaseInputsDirectory =
+  process.env.AGENCYAI_RELEASE_INPUTS_DIR?.trim() || null;
+const verifiedOpenCodeEvidenceDirectory = resolvedTargetTriple
+  ? resolve(
+      desktopRoot,
+      "resources",
+      "opencode-evidence",
+      resolvedTargetTriple,
+    )
+  : null;
 const taskTempRoot = mkdtempSync(join(tmpdir(), "agencyai-sidecar-"));
 process.once("exit", () => {
   rmSync(taskTempRoot, { recursive: true, force: true });
@@ -319,6 +329,74 @@ const assertExpectedHash = (filePath, expected, label) => {
     );
   }
   return actual;
+};
+
+const stageManifestOpenCodeEvidence = (asset, sourceDirectory) => {
+  if (!releaseInputsDirectory) {
+    throw new Error(
+      "AGENCYAI_RELEASE_INPUTS_DIR is required to stage OpenCode evidence",
+    );
+  }
+  if (!sourceDirectory || !existsSync(sourceDirectory)) {
+    throw new Error(
+      `Missing reviewed OpenCode evidence snapshot for ${resolvedTargetTriple}`,
+    );
+  }
+  const packagedEvidence = Object.keys(asset.artifactFiles)
+    .filter((fileName) => fileName !== asset.archive)
+    .sort((left, right) => left.localeCompare(right));
+  const entries = readdirSync(sourceDirectory, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (
+    entries.some((entry) => !entry.isFile())
+    || JSON.stringify(entries.map((entry) => entry.name))
+      !== JSON.stringify(packagedEvidence)
+  ) {
+    throw new Error(
+      `Reviewed OpenCode evidence closure mismatch: ${entries
+        .map((entry) => entry.name)
+        .join(", ")}`,
+    );
+  }
+
+  const evidenceDirectory = resolve(
+    releaseInputsDirectory,
+    "opencode",
+    resolvedTargetTriple,
+  );
+  rmSync(evidenceDirectory, { recursive: true, force: true });
+  mkdirSync(evidenceDirectory, { recursive: true });
+  for (const fileName of packagedEvidence) {
+    const sourcePath = join(sourceDirectory, fileName);
+    assertExpectedHash(
+      sourcePath,
+      asset.artifactFiles[fileName],
+      `OpenCode evidence ${fileName}`,
+    );
+    copyFileSync(sourcePath, join(evidenceDirectory, fileName));
+  }
+  writeFileSync(
+    join(evidenceDirectory, "evidence-inventory.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        target: resolvedTargetTriple,
+        excludedArchive: {
+          file: asset.archive,
+          sha256: asset.artifactFiles[asset.archive],
+        },
+        files: Object.fromEntries(
+          packagedEvidence.map((fileName) => [
+            fileName,
+            asset.artifactFiles[fileName],
+          ]),
+        ),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 };
 
 const resolveLocalArchiveOverride = (name) => {
@@ -438,6 +516,19 @@ const copyExecutable = (source, targets) => {
 };
 
 const opencodeAsset = targetDistribution.opencode;
+const verifiedBinaryPath =
+  process.env.AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH?.trim() || null;
+if (verifiedBinaryPath) {
+  const resolvedBinaryPath = resolve(verifiedBinaryPath);
+  if (!existsSync(resolvedBinaryPath) || !statSync(resolvedBinaryPath).isFile()) {
+    throw new Error(
+      "AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH does not point to a regular file",
+    );
+  }
+  verifyOpencodeBinarySync(resolvedBinaryPath, opencodeAsset);
+  copyExecutable(resolvedBinaryPath, [opencodeTargetPath, opencodePath]);
+}
+let verifiedWorkflowArchive = null;
 let verifiedExistingOpenCode = false;
 if (opencodeCandidatePath && existsSync(opencodeCandidatePath)) {
   try {
@@ -448,9 +539,25 @@ if (opencodeCandidatePath && existsSync(opencodeCandidatePath)) {
   }
 }
 
+if (productionPackaging) {
+  if (!releaseInputsDirectory) {
+    throw new Error(
+      "AGENCYAI_RELEASE_INPUTS_DIR is required for production packaging",
+    );
+  }
+  stageManifestOpenCodeEvidence(
+    opencodeAsset,
+    verifiedOpenCodeEvidenceDirectory,
+  );
+  if (!verifiedExistingOpenCode) {
+    verifiedWorkflowArchive = downloadManifestOpenCodeArchive(opencodeAsset);
+  }
+}
+
 if (!verifiedExistingOpenCode) {
   const archivePath =
     resolveLocalArchiveOverride("AGENCYAI_OPENCODE_ARCHIVE_PATH")
+    ?? verifiedWorkflowArchive
     ?? downloadManifestOpenCodeArchive(opencodeAsset);
   assertExpectedHash(
     archivePath,
@@ -583,6 +690,9 @@ if (shouldBuildOrchestrator) {
       ...process.env,
       NODE_ENV: "production",
       BUN_ENV: "production",
+      ...(releaseInputsDirectory
+        ? { AGENCYAI_RELEASE_INPUTS_DIR: releaseInputsDirectory }
+        : {}),
     },
   });
   if (result.status !== 0) {

@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "component": "AgencyAI-OpenCode",
+  "version": "1.17.11",
+  "target": "aarch64-apple-darwin",
+  "sourceDateEpoch": 315532800,
+  "upstream": {
+    "repository": "https://github.com/anomalyco/opencode",
+    "tag": "v1.17.11",
+    "commit": "67aec2212010d67775c35e696d8b8b54902eb338"
+  },
+  "fork": {
+    "repository": "https://github.com/artreimus/AgencyAI-OpenCode",
+    "tag": "product-opencode-v1.17.11-p3",
+    "commit": "1f29421c5386d77e1655f6adbf4585cedce03bc1",
+    "patchCommits": [
+      "14c9607366e56d9c0c0f34c5575c7e9045b24c2b",
+      "2a117b609748bc9bda24f74bdaea24600eeba676",
+      "dd1c3809ac23b91ec2fbdebc47c18cc45d79ad03",
+      "6ea79c2d5630eef28faa1adba81d5e6d95602ce9",
+      "250187ae065e706e7f3d068215a587445d98c1eb",
+      "21f80fa95205275d38ff05490fb640e624dc315d",
+      "b4f05fef52047d30f5c4656dcd8480e2c4e72de7",
+      "d7a2e5ed280a976d4b16e96c33e6b4780af6a34b",
+      "b424e670490d6241dca6f7fbcb3d6608af69aa41",
+      "1f29421c5386d77e1655f6adbf4585cedce03bc1"
+    ]
+  },
+  "workflow": {
+    "repository": "artreimus/AgencyAI-OpenCode",
+    "runId": "30393234285",
+    "attempt": "1",
+    "event": "push",
+    "ref": "refs/heads/agencyai-runtime-lock",
+    "url": "https://github.com/artreimus/AgencyAI-OpenCode/actions/runs/30393234285",
+    "file": ".github/workflows/agencyai-runtime.yml",
+    "sha256": "07ba865f7f4285200ed49390306e93d16f358912a84d82e7f7ea24f41c0e989b"
+  },
+  "build": {
+    "command": "bun packages/opencode/script/build.ts --single --skip-embed-web-ui --skip-install",
+    "outputBinary": "packages/opencode/dist/opencode-darwin-arm64/bin/opencode",
+    "binary": {
+      "sha256": "5e6e64585e7cce235e85feb45f3acfa4ad75cf7c14c62ce7dde1dc2b39da0592",
+      "signed": "ad-hoc codesign before archiving"
+    },
+    "archive": {
+      "file": "opencode-darwin-arm64.zip",
+      "sha256": "afa1a263a48a7b7654e802286648867d266049caac6acbf57ff2737ea53ef27f"
+    },
+    "environment": {
+      "OPENCODE_CHANNEL": "latest",
+      "OPENCODE_DISABLE_AUTOUPDATE": "1",
+      "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS": "1",
+      "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+      "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
+      "OPENCODE_DISABLE_MODELS_FETCH": "1",
+      "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+      "OPENCODE_DISABLE_REMOTE_CONFIG": "1",
+      "OPENCODE_DISABLE_REMOTE_INSTRUCTIONS": "1",
+      "OPENCODE_DISABLE_REMOTE_SKILLS": "1",
+      "OPENCODE_DISABLE_RUNTIME_DOWNLOADS": "1",
+      "OPENCODE_DISABLE_SHARE": "1",
+      "OPENCODE_ENABLE_EXA": "0",
+      "OPENCODE_TRUSTED_PLUGIN_PATHS": "[]"
+    }
+  },
+  "toolchain": {
+    "bun": "1.3.14",
+    "git": "git version 2.55.0",
+    "macos": "15.7.7",
+    "xcode": "Xcode 16.4\nBuild version 16F6",
+    "zip": "This is Zip 3.0 (July 5th 2008), by Info-ZIP, with modifications by Apple Inc.",
+    "runner": {
+      "imageOS": "macos15",
+      "imageVersion": "20260715.0234.1",
+      "os": "macOS",
+      "arch": "ARM64",
+      "name": "GitHub Actions 1000000465"
+    }
+  },
+  "dependencies": {
+    "lockFile": "bun.lock",
+    "lockSha256": "fed696256a2d4119f99b6266b07c6d09f386a70f48dadd327fb89e3946fd1dd0",
+    "ghosttyWeb": {
+      "source": "github:anomalyco/ghostty-web#20bd3613f59dfc0f088a9aec498db2fa1a08b768",
+      "commit": "20bd3613f59dfc0f088a9aec498db2fa1a08b768"
+    },
+    "modelsDev": {
+      "source": "https://github.com/anomalyco/models.dev",
+      "commit": "814f7e04e0f320a6a68fbdd85feae5dfb25e7611",
+      "buildCommand": "bun run --cwd packages/web build",
+      "sourcePath": "packages/web/dist/_api.json",
+      "file": ".github/agencyai/models-dev-api.json",
+      "sha256": "586465440061b34b1575a968b8d04d2d302200a8fe37479be80831356d205b76"
+    }
+  },
+  "sboms": [
+    {
+      "file": "opencode-darwin-arm64.spdx.json",
+      "format": "SPDX JSON",
+      "scope": "signed runtime binary",
+      "sha256": "e59a9aa5f792fca2db046a14377437d3188b09dfa489a2a4dccd2bcc528d400a"
+    },
+    {
+      "file": "opencode-darwin-arm64.cdx.json",
+      "format": "CycloneDX JSON",
+      "scope": "signed runtime binary",
+      "sha256": "4a8ee327162e08e9d745f8aabb5961f874baa8de06d436ed6ee0a7584b9af3d5"
+    },
+    {
+      "file": "opencode-build-source.cdx.json",
+      "format": "CycloneDX JSON",
+      "scope": "build source tree",
+      "sha256": "ef292561b568fff6726d81272a3c26fce03989e7741676f7770a9440f2f6f9b1"
+    }
+  ],
+  "notices": [
+    {
+      "file": "LICENSE-OpenCode",
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+    },
+    {
+      "file": "AGENCYAI_FORK_NOTICE.md",
+      "sha256": "25a5c9a49c0842352807faba3f49b9e1654d88a7d491b81bbe9ad74a75d39f93"
+    }
+  ],
+  "materials": [
+    {
+      "file": ".github/workflows/agencyai-runtime.yml",
+      "sha256": "07ba865f7f4285200ed49390306e93d16f358912a84d82e7f7ea24f41c0e989b"
+    },
+    {
+      "file": "bun.lock",
+      "sha256": "fed696256a2d4119f99b6266b07c6d09f386a70f48dadd327fb89e3946fd1dd0"
+    },
+    {
+      "file": ".github/agencyai/models-dev-api.json",
+      "sha256": "586465440061b34b1575a968b8d04d2d302200a8fe37479be80831356d205b76"
+    },
+    {
+      "file": ".github/agencyai/models-dev-snapshot.json",
+      "sha256": "e836d38788f6530012bdf2d89bcc9aa1fdca39e2d014beede5dc20063477345b"
+    }
+  ]
+}

@@ -28,8 +28,16 @@ const actionCommands = Object.freeze({
     ["run", "test:eval-runner"],
     ["--filter", "openwork-server", "build"],
     ["--filter", "@openwork/app", "build"],
+    [
+      "--filter",
+      "@openwork/desktop",
+      "exec",
+      "node",
+      "./scripts/stage-agencyai-docs.mjs",
+    ],
     ["--filter", "@openwork/desktop", "check:electron"],
     ["run", "check:outbound-access"],
+    ["run", "check:local-profile"],
   ],
 });
 
@@ -85,6 +93,11 @@ export function resolveLocalProfileAction(
           args: [
             "--test",
             resolve(repoRoot, "scripts/check-source-closure.test.mjs"),
+            resolve(repoRoot, "scripts/check-local-profile.test.mjs"),
+            resolve(
+              repoRoot,
+              "scripts/release/local-release-policy.test.mjs",
+            ),
           ],
         }]
       : []),

@@ -19,7 +19,7 @@ import {
 } from "@opencode-ai/plugin";
 import reviewedBrowserPlugin from "opencode-chrome-devtools";
 
-import { uiControlDiscoveryPaths } from "./ui-control-discovery.js";
+import { localUiControlDiscoveryPaths } from "./local-ui-control-discovery.js";
 
 const REVIEWED_BROWSER_PLUGIN_VERSION = "1.0.4";
 const BROWSER_POLICY_TIMEOUT_MS = 3_000;
@@ -84,7 +84,7 @@ async function readAgencyAiUiBridge(): Promise<{
     throw new Error("AgencyAI browser automation storage is unavailable");
   }
 
-  for (const candidate of uiControlDiscoveryPaths({ localOnly: true })) {
+  for (const candidate of localUiControlDiscoveryPaths()) {
     try {
       const stat = await lstat(candidate);
       if (!stat.isFile() || stat.isSymbolicLink()) continue;

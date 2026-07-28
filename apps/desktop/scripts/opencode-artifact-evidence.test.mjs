@@ -24,10 +24,10 @@ const TARGET = "aarch64-apple-darwin";
 const REPOSITORY = "artreimus/AgencyAI-OpenCode";
 const SOURCE_REPOSITORY = `https://github.com/${REPOSITORY}`;
 const WORKFLOW_PATH = ".github/workflows/agencyai-runtime.yml";
-const WORKFLOW_RUN_ID = 30360214214;
-const ARTIFACT_ID = 8688522440;
+const WORKFLOW_RUN_ID = 30393234285;
+const ARTIFACT_ID = 8701822665;
 const ARTIFACT_NAME = "agencyai-opencode-1.17.11-darwin-arm64";
-const FORK_TAG = "product-opencode-v1.17.11-p2";
+const FORK_TAG = "product-opencode-v1.17.11-p3";
 const EXPIRES_AT = "2030-10-26T12:43:49Z";
 const UPSTREAM_COMMIT = "0".repeat(40);
 const PATCH_COMMITS = ["1".repeat(40), "2".repeat(40), "3".repeat(40)];
@@ -35,6 +35,9 @@ const FORK_COMMIT = PATCH_COMMITS.at(-1);
 const BINARY_HASH = sha256("reviewed signed OpenCode binary");
 const WORKFLOW_HASH = sha256("reviewed workflow");
 const LOCK_HASH = sha256("reviewed bun.lock");
+const MODELS_DEV_COMMIT = "c".repeat(40);
+const MODELS_DEV_HASH = sha256("reviewed models.dev snapshot");
+const MODELS_DEV_METADATA_HASH = sha256("reviewed models.dev metadata");
 const roots = [];
 
 afterEach(() => {
@@ -185,6 +188,14 @@ function fixture() {
         source: `github:anomalyco/ghostty-web#${"d".repeat(40)}`,
         commit: "d".repeat(40),
       },
+      modelsDev: {
+        source: "https://github.com/anomalyco/models.dev",
+        commit: MODELS_DEV_COMMIT,
+        buildCommand: "bun run --cwd packages/web build",
+        sourcePath: "packages/web/dist/_api.json",
+        file: ".github/agencyai/models-dev-api.json",
+        sha256: MODELS_DEV_HASH,
+      },
     },
     sboms: [
       {
@@ -210,6 +221,14 @@ function fixture() {
     materials: [
       { file: WORKFLOW_PATH, sha256: WORKFLOW_HASH },
       { file: "bun.lock", sha256: LOCK_HASH },
+      {
+        file: ".github/agencyai/models-dev-api.json",
+        sha256: MODELS_DEV_HASH,
+      },
+      {
+        file: ".github/agencyai/models-dev-snapshot.json",
+        sha256: MODELS_DEV_METADATA_HASH,
+      },
     ],
   };
 
@@ -421,6 +440,9 @@ describe("OpenCode workflow artifact evidence", () => {
       ["binary hash", (value) => { value.provenance.build.binary.sha256 = "e".repeat(64); }, /binary hash/i],
       ["environment", (value) => { value.provenance.build.environment.OPENCODE_DISABLE_SHARE = "0"; }, /environment OPENCODE_DISABLE_SHARE/i],
       ["lock hash", (value) => { value.provenance.dependencies.lockSha256 = "e".repeat(64); }, /lock material hash/i],
+      ["models.dev source", (value) => { value.provenance.dependencies.modelsDev.source = "https://example.invalid/models"; }, /models\.dev source/i],
+      ["models.dev commit", (value) => { value.provenance.dependencies.modelsDev.commit = "invalid"; }, /models\.dev commit/i],
+      ["models.dev snapshot", (value) => { value.provenance.dependencies.modelsDev.sha256 = "e".repeat(64); }, /models\.dev snapshot material hash/i],
       ["workflow attempt", (value) => { value.provenance.workflow.attempt = "2"; }, /workflow attempt/i],
     ];
     for (const [label, mutate, expected] of cases) {

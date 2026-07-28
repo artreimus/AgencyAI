@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -28,6 +28,7 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const repoRoot = resolve(appRoot, "../..");
 const appPackagePath = resolve(appRoot, "package.json");
 const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
 const productProfile = getBuildProductProfile();
@@ -119,6 +120,77 @@ const migrationReleaseEnv = productProfile.features.legacyOpenWorkImport
 // so asset URLs must stay relative to agencyai-internal://renderer/. Tauri
 // serves via its own protocol where absolute paths continue to work.
 const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
+const releaseInputsDirectory =
+  process.env.AGENCYAI_RELEASE_INPUTS_DIR?.trim() || null;
+
+function agencyAiReleaseInputsPlugin() {
+  const transformedModules = new Set<string>();
+  const normalizeModuleId = (moduleId: string) => {
+    const clean = moduleId.split("?")[0] ?? moduleId;
+    if (!clean || clean.startsWith("\0")) return clean;
+    const repoRelative = relative(repoRoot, clean);
+    if (
+      repoRelative
+      && repoRelative !== ".."
+      && !repoRelative.startsWith(`..${sep}`)
+    ) {
+      return repoRelative.split(sep).join("/");
+    }
+    return clean;
+  };
+
+  return {
+    name: "agencyai-release-inputs",
+    transform(_code: string, moduleId: string) {
+      const normalized = normalizeModuleId(moduleId);
+      if (normalized && !normalized.startsWith("\0")) {
+        transformedModules.add(normalized);
+      }
+      return null;
+    },
+    generateBundle(
+      this: { getModuleIds: () => IterableIterator<string> },
+      _options: unknown,
+      bundle: Record<
+        string,
+        {
+          type: "asset" | "chunk";
+          originalFileName?: string | null;
+          originalFileNames?: string[];
+        }
+      >,
+    ) {
+      if (!isElectronPackagedBuild || !releaseInputsDirectory) return;
+      const assetSourceFiles = Object.values(bundle).flatMap((output) => [
+        ...(output.originalFileName ? [output.originalFileName] : []),
+        ...(output.originalFileNames ?? []),
+      ]);
+      const modules = Array.from(
+        new Set([
+          ...transformedModules,
+          ...Array.from(this.getModuleIds(), normalizeModuleId),
+          ...assetSourceFiles.map(normalizeModuleId),
+        ]),
+      )
+        .filter((moduleId) => moduleId && !moduleId.startsWith("\0"))
+        .sort();
+      mkdirSync(releaseInputsDirectory, { recursive: true });
+      writeFileSync(
+        resolve(releaseInputsDirectory, "renderer-modules.json"),
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            profile: productProfile.profile,
+            modules,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    },
+  };
+}
 
 export default defineConfig({
   base: isElectronPackagedBuild ? "./" : "/",
@@ -153,6 +225,7 @@ export default defineConfig({
         });
       },
     },
+    agencyAiReleaseInputsPlugin(),
     tailwindcss(),
     react({
       babel: {

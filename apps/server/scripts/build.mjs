@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -18,6 +19,11 @@ const serverRoot = path.resolve(
 const distRoot = path.join(serverRoot, "dist");
 const pluginDist = path.join(distRoot, "opencode-plugins");
 const pluginSourceRoot = path.join(serverRoot, "src", "opencode-plugins");
+const releaseInputsDirectory =
+  process.env.AGENCYAI_RELEASE_INPUTS_DIR?.trim() || null;
+const pluginMetafilePath = releaseInputsDirectory
+  ? path.resolve(releaseInputsDirectory, "server-plugins.metafile.json")
+  : null;
 const pluginEntrypoints = Object.freeze([
   "openwork-extensions-preview",
   "openwork-capabilities-knowledge",
@@ -73,6 +79,14 @@ function validatePluginBundles() {
     );
   }
   if (
+    browserSource.includes("com.differentai.openwork")
+    || browserSource.includes("com.differentai.openwork.dev")
+  ) {
+    throw new Error(
+      "AgencyAI browser automation bundle retained an upstream storage identifier",
+    );
+  }
+  if (
     existsSync(path.join(pluginDist, "src"))
     || actualFiles.some((name) => name.includes(".test."))
   ) {
@@ -87,6 +101,9 @@ run(process.execPath, [
   path.join(serverRoot, "tsconfig.build.json"),
 ]);
 rmSync(pluginDist, { recursive: true, force: true });
+if (releaseInputsDirectory) {
+  mkdirSync(releaseInputsDirectory, { recursive: true });
+}
 run(process.platform === "win32" ? "bun.exe" : "bun", [
   "build",
   ...pluginEntrypoints.map((name) =>
@@ -99,6 +116,7 @@ run(process.platform === "win32" ? "bun.exe" : "bun", [
   "node",
   "--format",
   "esm",
+  ...(pluginMetafilePath ? [`--metafile=${pluginMetafilePath}`] : []),
 ]);
 validatePluginBundles();
 

@@ -1,9 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
-import { randomInt } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import {
   cp,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -36,7 +37,11 @@ import {
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
-import { createBrowserPanel } from "./browser-panel.mjs";
+import {
+  BROWSER_SESSION_PARTITION,
+  createBrowserPanel,
+} from "./browser-panel.mjs";
+import { createNetworkAuditFromEnvironment } from "./network-audit.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
   buildNukeManifest,
@@ -821,6 +826,11 @@ const storageLayout = resolveElectronStorageLayout({
 });
 await ensureStorageLayout(storageLayout);
 applyStorageLayoutEnvironment(process.env, storageLayout);
+const networkAudit = createNetworkAuditFromEnvironment({
+  env: process.env,
+  storageRoot: storageLayout.root,
+});
+networkAudit?.installGlobalFetch(globalThis);
 app.setPath("userData", storageLayout.userData);
 app.setPath("sessionData", storageLayout.sessionData);
 app.setAppLogsPath(storageLayout.logs);
@@ -2358,6 +2368,68 @@ const desktopCommandHandlers = {
         arch: process.arch,
       });
   },
+  "releaseMetadataRead": async (event, ...args) => {
+      /** @type {Map<import("@openwork/types/desktop-ipc").ReleaseMetadataFile, import("@openwork/types/desktop-ipc").ReleaseMetadataDocument["mediaType"]>} */
+      const allowedFiles = new Map([
+        ["THIRD_PARTY_NOTICES.txt", "text/plain"],
+        ["ELECTRON-LICENSE.txt", "text/plain"],
+        ["LICENSES.chromium.html", "text/html"],
+        ["agencyai-desktop.spdx.json", "application/json"],
+        ["agencyai-desktop.cdx.json", "application/json"],
+        ["release-manifest.json", "application/json"],
+      ]);
+      const fileName = args[0];
+      const mediaType = allowedFiles.get(fileName);
+      if (!mediaType) {
+        throw new Error("Release metadata file is not allowlisted");
+      }
+      /** @type {import("@openwork/types/desktop-ipc").ReleaseMetadataDocument} */
+      const unavailable = {
+        available: false,
+        fileName,
+        mediaType,
+        content: null,
+        size: null,
+        sha256: null,
+      };
+      if (!app.isPackaged) return unavailable;
+      const metadataRoot = path.join(
+        process.resourcesPath,
+        "release-metadata",
+      );
+      const filePath = path.join(metadataRoot, fileName);
+      const relativePath = path.relative(metadataRoot, filePath);
+      if (
+        !relativePath
+        || relativePath.startsWith("..")
+        || path.isAbsolute(relativePath)
+      ) {
+        throw new Error("Release metadata path escaped its allowlisted root");
+      }
+      let fileStats;
+      try {
+        fileStats = await lstat(filePath);
+      } catch (error) {
+        if (error?.code === "ENOENT") return unavailable;
+        throw error;
+      }
+      if (
+        !fileStats.isFile()
+        || fileStats.isSymbolicLink()
+        || fileStats.size > 32 * 1024 * 1024
+      ) {
+        throw new Error("Release metadata file is unsafe or too large");
+      }
+      const content = await readFile(filePath, "utf8");
+      return {
+        available: true,
+        fileName,
+        mediaType,
+        content,
+        size: fileStats.size,
+        sha256: createHash("sha256").update(content).digest("hex"),
+      };
+  },
   "desktopNotificationShow": async (event, ...args) => {
       return showDesktopNotification(args[0] ?? {});
   },
@@ -3288,6 +3360,11 @@ or use: pnpm dev:worktree`);
 
   app.whenReady().then(async () => {
     ensureInternalRendererProtocol();
+    networkAudit?.installElectronSession(session.defaultSession, "default");
+    networkAudit?.installElectronSession(
+      session.fromPartition(BROWSER_SESSION_PARTITION),
+      "browser",
+    );
     installMediaPermissionHandlers(session, () => mainWindow, {
       trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
       allowMicrophone: PRODUCT_PROFILE.features.voice,

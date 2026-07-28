@@ -112,6 +112,38 @@ function signComputerUseHelper(helperPath, options) {
   runCodesign(args, "Computer Use helper app");
 }
 
+function sealOuterApplication(appPath, options, entitlementsPath) {
+  const identity = options.identity || "-";
+  const args = [
+    "--force",
+    "--options",
+    "runtime",
+    "--entitlements",
+    entitlementsPath,
+    ...signingArgs(options),
+    "--sign",
+    identity,
+  ];
+  if (identity !== "-") args.push("--timestamp");
+  args.push(appPath);
+  runCodesign(args, "AgencyAI outer application bundle");
+}
+
+function generateReleaseMetadata(appPath, target) {
+  const scriptPath = path.join(__dirname, "generate-release-metadata.mjs");
+  const result = spawnSync(
+    process.execPath,
+    [scriptPath, "--app", appPath, "--target", target],
+    { stdio: "inherit", env: process.env },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `AgencyAI release metadata generation failed with status ${result.status ?? -1}`,
+    );
+  }
+}
+
 async function electronSign(options) {
   if (options.platform !== "darwin") {
     const { sign } = await import("@electron/osx-sign");
@@ -173,13 +205,21 @@ async function electronSign(options) {
 
   const ignore = canonicalExactIgnore(executablePaths, options.ignore);
   const { sign } = await import("@electron/osx-sign");
-  return sign({
+  const result = await sign({
     ...options,
     ignore,
   });
+  // The first signing pass finalizes every nested Mach-O. Generate provenance
+  // from that exact closure, then re-seal only the outer bundle so the metadata
+  // is covered by the application signature without mutating nested hashes.
+  generateReleaseMetadata(appPath, target);
+  sealOuterApplication(appPath, options, entitlementsPath);
+  return result;
 }
 
 module.exports = electronSign;
 module.exports.default = electronSign;
 module.exports.canonicalExactIgnore = canonicalExactIgnore;
+module.exports.generateReleaseMetadata = generateReleaseMetadata;
 module.exports.resolvePackagedTarget = resolvePackagedTarget;
+module.exports.sealOuterApplication = sealOuterApplication;

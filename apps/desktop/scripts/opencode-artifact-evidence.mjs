@@ -14,6 +14,11 @@ const BUILD_COMMAND =
 const BUILD_OUTPUT =
   "packages/opencode/dist/opencode-darwin-arm64/bin/opencode";
 const SOURCE_DATE_EPOCH = 315532800;
+const MODELS_DEV_SOURCE = "https://github.com/anomalyco/models.dev";
+const MODELS_DEV_BUILD_COMMAND = "bun run --cwd packages/web build";
+const MODELS_DEV_SOURCE_PATH = "packages/web/dist/_api.json";
+const MODELS_DEV_SNAPSHOT_FILE = ".github/agencyai/models-dev-api.json";
+const MODELS_DEV_METADATA_FILE = ".github/agencyai/models-dev-snapshot.json";
 
 export const OPENCODE_ARTIFACT_FILES = Object.freeze([
   "AGENCYAI_FORK_NOTICE.md",
@@ -470,6 +475,28 @@ function verifyProvenance({
     ghostty.source === `github:anomalyco/ghostty-web#${ghostty.commit}`,
     "Provenance ghostty-web source is not commit-pinned",
   );
+  const modelsDev = assertRecord(
+    dependencies.modelsDev,
+    "Provenance models.dev dependency",
+  );
+  invariant(
+    modelsDev.source === MODELS_DEV_SOURCE,
+    "Provenance models.dev source is not the reviewed repository",
+  );
+  assertCommit(modelsDev.commit, "Provenance models.dev commit");
+  invariant(
+    modelsDev.buildCommand === MODELS_DEV_BUILD_COMMAND,
+    "Provenance models.dev build command does not match the reviewed command",
+  );
+  invariant(
+    modelsDev.sourcePath === MODELS_DEV_SOURCE_PATH,
+    "Provenance models.dev source path does not match the reviewed output",
+  );
+  invariant(
+    modelsDev.file === MODELS_DEV_SNAPSHOT_FILE,
+    "Provenance models.dev snapshot file does not match the reviewed path",
+  );
+  assertSha256(modelsDev.sha256, "Provenance models.dev snapshot hash");
 
   const sbomDescriptors = {
     "opencode-build-source.cdx.json": {
@@ -513,7 +540,12 @@ function verifyProvenance({
 
   const materials = entriesByFile(
     provenance.materials,
-    [asset.workflowPath, "bun.lock"],
+    [
+      asset.workflowPath,
+      "bun.lock",
+      MODELS_DEV_SNAPSHOT_FILE,
+      MODELS_DEV_METADATA_FILE,
+    ],
     "Provenance materials",
   );
   invariant(
@@ -523,6 +555,14 @@ function verifyProvenance({
   invariant(
     materials.get("bun.lock").sha256 === dependencies.lockSha256,
     "Provenance lock material hash does not match dependencies.lockSha256",
+  );
+  invariant(
+    materials.get(MODELS_DEV_SNAPSHOT_FILE).sha256 === modelsDev.sha256,
+    "Provenance models.dev snapshot material hash does not match dependencies.modelsDev.sha256",
+  );
+  assertSha256(
+    materials.get(MODELS_DEV_METADATA_FILE).sha256,
+    "Provenance models.dev metadata material hash",
   );
 
   const spdx = readJsonSync(

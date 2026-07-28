@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "electronRuntime": {
+    "electron": "43.2.0",
+    "chromium": "150.0.7871.129",
+    "node": "24.18.0",
+    "source": "https://releases.electronjs.org/release/v43.2.0"
+  },
+  "allowedLicenses": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "ISC",
+    "MIT",
+    "OFL-1.1",
+    "Python-2.0"
+  ],
+  "licenseSelections": {
+    "@paper-design/shaders": {
+      "declared": "SEE LICENSE IN https://github.com/paper-design/shaders/blob/main/LICENSE",
+      "selected": "MIT"
+    },
+    "@paper-design/shaders-react": {
+      "declared": "SEE LICENSE IN https://github.com/paper-design/shaders/blob/main/LICENSE",
+      "selected": "MIT"
+    },
+    "dompurify": {
+      "declared": "(MPL-2.0 OR Apache-2.0)",
+      "selected": "Apache-2.0"
+    }
+  },
+  "licenseFallbacks": {
+    "@ai-sdk/provider-utils": {
+      "selected": "Apache-2.0",
+      "source": "same-license-component"
+    },
+    "@opencode-ai/plugin": {
+      "selected": "MIT",
+      "source": "opencode"
+    },
+    "@opencode-ai/sdk": {
+      "selected": "MIT",
+      "source": "opencode"
+    },
+    "drizzle-orm": {
+      "selected": "Apache-2.0",
+      "source": "same-license-component"
+    },
+    "lazy-val": {
+      "selected": "MIT",
+      "source": "mit-template",
+      "copyright": "Copyright (c) Vladimir Krivosheev"
+    },
+    "marked-shiki": {
+      "selected": "MIT",
+      "source": "mit-template",
+      "copyright": "Copyright (c) Beni Arisandi"
+    },
+    "opencode-chrome-devtools": {
+      "selected": "MIT",
+      "source": "mit-template",
+      "copyright": "Copyright (c) Benjamin Shafii"
+    }
+  },
+  "internalPackagePrefixes": [
+    "@openwork/",
+    "openwork-"
+  ],
+  "reviewedComponentLicenses": {
+    "chromium": "NOASSERTION",
+    "computer-use-helper": "MIT",
+    "electron": "MIT",
+    "models.dev": "MIT",
+    "opencode": "MIT",
+    "ripgrep": "MIT",
+    "sqlite": "LicenseRef-Public-Domain"
+  }
+}
