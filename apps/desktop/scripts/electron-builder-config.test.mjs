@@ -358,6 +358,10 @@ test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release creden
   );
   assert.match(workflow, /OPENCODE_VERSION: "1\.17\.11"/);
   assert.match(workflow, /test "\$OPENCODE_VERSION" = "\$binary_version"/);
+  assert.match(
+    workflow,
+    /\/Users\/runner\/work\/AgencyAI-OpenCode\/AgencyAI-OpenCode/,
+  );
   assert.match(workflow, /sourceBinarySha256/);
   assert.match(workflow, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
   assert.match(workflow, /pnpm package:local:dir/);

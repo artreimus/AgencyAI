@@ -81,7 +81,9 @@ jobs:
           OPENCODE_TRUSTED_PLUGIN_PATHS: "[]"
         run: |
           set -euo pipefail
-          source_root="$RUNNER_TEMP/AgencyAI-OpenCode"
+          # Bun embeds dependency paths, so the reviewed checkout root is a
+          # byte-for-byte build input alongside the commit and toolchain.
+          source_root="$(dirname "$RUNNER_WORKSPACE")/AgencyAI-OpenCode/AgencyAI-OpenCode"
           output_binary="$RUNNER_TEMP/agencyai-opencode"
           source_repository="$(jq -r '.sourceRepository' opencode-distribution.json)"
           source_commit="$(jq -r '.forkCommit' opencode-distribution.json)"
@@ -90,6 +92,7 @@ jobs:
 
           test "$source_repository" = "https://github.com/artreimus/AgencyAI-OpenCode"
           test "$OPENCODE_VERSION" = "$binary_version"
+          test "$source_root" = "/Users/runner/work/AgencyAI-OpenCode/AgencyAI-OpenCode"
           test ! -e "$source_root"
           mkdir -p "$source_root"
           git -C "$source_root" init --quiet
