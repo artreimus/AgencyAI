@@ -16,6 +16,7 @@ type UiControlDiscoveryOptions = Readonly<{
   homeDir?: string;
   platform?: NodeJS.Platform;
   productPolicy?: ServerProductPolicy;
+  localOnly?: boolean;
 }>;
 
 function userAppDataDir(options?: UiControlDiscoveryOptions): string {
@@ -36,7 +37,10 @@ export function uiControlDiscoveryPaths(
 ): string[] {
   const env = options?.env ?? process.env;
   const explicit = env.OPENWORK_UI_CONTROL_DISCOVERY?.trim();
-  if (!legacyOpenWorkImportEnabled(options?.productPolicy)) {
+  if (
+    options?.localOnly === true
+    || !legacyOpenWorkImportEnabled(options?.productPolicy)
+  ) {
     const storageRoot = env.OPENWORK_STORAGE_ROOT?.trim();
     if (
       !explicit

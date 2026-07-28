@@ -1,4 +1,17 @@
 import { existsSync } from "node:fs";
+import {
+  disableOpenworkCloudMcp,
+  withoutOpenworkCloudMcp,
+  type McpOriginalEnabledState,
+} from "./mcp-product-policy.js";
+import {
+  isLocalMvpProduct,
+  type ServerProductPolicy,
+} from "./product-policy.js";
+import {
+  withLocalMvpRequiredDisabledProviders,
+  withoutLocalMvpBlockedProviders,
+} from "./opencode-runtime-product-policy.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
@@ -14,6 +27,7 @@ export type RuntimeOpencodeConfig = {
     external_directory?: Record<string, unknown>;
   };
   provider?: Record<string, unknown>;
+  experimental?: Record<string, unknown>;
 };
 
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
@@ -27,6 +41,9 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
   const provider = isRecord(value.provider) ? value.provider : undefined;
+  const experimental = isRecord(value.experimental)
+    ? value.experimental
+    : undefined;
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(plugin ? { plugin } : {}),
@@ -34,6 +51,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(mcp ? { mcp } : {}),
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
+    ...(experimental ? { experimental } : {}),
   };
 }
 
@@ -49,6 +67,60 @@ const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>
   tableName: "runtime_opencode_configs",
   valueColumn: "config_json",
   parse: parseRuntimeOpencodeConfig,
+  serialize: (value) => JSON.stringify(value),
+});
+
+export type RuntimeMcpPolicyQuarantineEntry = Readonly<{
+  reason: "local-mvp";
+  originalEnabled: McpOriginalEnabledState;
+  quarantinedAt: number;
+}>;
+
+export type RuntimeMcpPolicyQuarantine = Readonly<{
+  schemaVersion: 1;
+  mcp: Readonly<Record<string, RuntimeMcpPolicyQuarantineEntry>>;
+}>;
+
+function normalizeOriginalEnabledState(value: unknown): McpOriginalEnabledState | null {
+  if (!isRecord(value) || typeof value.present !== "boolean") return null;
+  if (!value.present) return { present: false };
+  if (!Object.hasOwn(value, "value")) return null;
+  return { present: true, value: value.value };
+}
+
+function parseRuntimeMcpPolicyQuarantine(valueJson: string): RuntimeMcpPolicyQuarantine {
+  try {
+    const value = JSON.parse(valueJson) as unknown;
+    if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.mcp)) {
+      return { schemaVersion: 1, mcp: {} };
+    }
+    const mcp: Record<string, RuntimeMcpPolicyQuarantineEntry> = {};
+    for (const [name, rawEntry] of Object.entries(value.mcp)) {
+      if (
+        !isRecord(rawEntry)
+        || rawEntry.reason !== "local-mvp"
+        || typeof rawEntry.quarantinedAt !== "number"
+      ) {
+        continue;
+      }
+      const originalEnabled = normalizeOriginalEnabledState(rawEntry.originalEnabled);
+      if (!originalEnabled) continue;
+      mcp[name] = {
+        reason: "local-mvp",
+        originalEnabled,
+        quarantinedAt: rawEntry.quarantinedAt,
+      };
+    }
+    return { schemaVersion: 1, mcp };
+  } catch {
+    return { schemaVersion: 1, mcp: {} };
+  }
+}
+
+const runtimeMcpPolicyQuarantineStore = createWorkspaceKvStore<RuntimeMcpPolicyQuarantine>({
+  tableName: "runtime_mcp_policy_quarantines",
+  valueColumn: "quarantine_json",
+  parse: parseRuntimeMcpPolicyQuarantine,
   serialize: (value) => JSON.stringify(value),
 });
 
@@ -70,14 +142,61 @@ export function runtimePluginList(config: RuntimeOpencodeConfig): string[] {
   return Array.isArray(config.plugin) ? config.plugin.filter((item) => typeof item === "string") : [];
 }
 
+export function runtimePluginListForProduct(
+  config: RuntimeOpencodeConfig,
+  productPolicy?: ServerProductPolicy,
+): string[] {
+  return isLocalMvpProduct(productPolicy) ? [] : runtimePluginList(config);
+}
+
 export function runtimeDisabledProviderList(config: RuntimeOpencodeConfig): string[] {
   return Array.isArray(config.disabled_providers)
     ? config.disabled_providers.filter((item) => typeof item === "string")
     : [];
 }
 
+export function runtimeDisabledProviderListForProduct(
+  config: RuntimeOpencodeConfig,
+  productPolicy?: ServerProductPolicy,
+): string[] {
+  const providers = runtimeDisabledProviderList(config);
+  return isLocalMvpProduct(productPolicy)
+    ? withLocalMvpRequiredDisabledProviders(providers)
+    : providers;
+}
+
+export function runtimeProviderMapForProduct(
+  config: RuntimeOpencodeConfig,
+  productPolicy?: ServerProductPolicy,
+): Record<string, unknown> {
+  return isLocalMvpProduct(productPolicy)
+    ? withoutLocalMvpBlockedProviders(config.provider)
+    : isRecord(config.provider)
+    ? config.provider
+    : {};
+}
+
 export function runtimeMcpMap(config: RuntimeOpencodeConfig): Record<string, Record<string, unknown>> {
   return isRecord(config.mcp) ? config.mcp as Record<string, Record<string, unknown>> : {};
+}
+
+function mcpMapFromUnknown(value: unknown): Record<string, Record<string, unknown>> {
+  if (!isRecord(value)) return {};
+  const mcp: Record<string, Record<string, unknown>> = {};
+  for (const [name, entry] of Object.entries(value)) {
+    if (isRecord(entry)) mcp[name] = entry;
+  }
+  return mcp;
+}
+
+export function runtimeMcpMapForProduct(
+  config: RuntimeOpencodeConfig,
+  productPolicy?: ServerProductPolicy,
+): Record<string, Record<string, unknown>> {
+  const mcp = runtimeMcpMap(config);
+  return isLocalMvpProduct(productPolicy)
+    ? withoutOpenworkCloudMcp(mcp)
+    : mcp;
 }
 
 /** Narrow server-owned read port for consumers that need one runtime MCP endpoint. */
@@ -86,7 +205,10 @@ export async function readRuntimeMcpConfig(
   workspaceId: string,
   name: string,
 ): Promise<Record<string, unknown> | null> {
-  return runtimeMcpMap(await readRuntimeOpencodeConfig(config, workspaceId))[name] ?? null;
+  return runtimeMcpMapForProduct(
+    await readRuntimeOpencodeConfig(config, workspaceId),
+    config.productPolicy,
+  )[name] ?? null;
 }
 
 export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<string, unknown> {
@@ -118,6 +240,14 @@ export function mergeRuntimeProviderUpdate(
 
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
   return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
+}
+
+export async function readRuntimeMcpPolicyQuarantine(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<RuntimeMcpPolicyQuarantine> {
+  return await runtimeMcpPolicyQuarantineStore.get(config, workspaceId)
+    ?? { schemaVersion: 1, mcp: {} };
 }
 
 export type RuntimeOpencodeConfigInspection = {
@@ -286,7 +416,33 @@ export async function writeRuntimeOpencodeConfig(
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   const row = await runtimeOpencodeConfigStore.getRow(config, workspaceId);
   const current = row ? row.value : {};
-  const next = normalizeRuntimeOpencodeConfig(updater(current));
+  let next = normalizeRuntimeOpencodeConfig(updater(current));
+  if (isLocalMvpProduct(config.productPolicy)) {
+    const disabled = disableOpenworkCloudMcp(runtimeMcpMap(next));
+    const names = Object.keys(disabled.originalEnabledByName);
+    if (names.length > 0) {
+      const quarantine = await readRuntimeMcpPolicyQuarantine(config, workspaceId);
+      const quarantinedMcp = { ...quarantine.mcp };
+      let quarantineChanged = false;
+      const quarantinedAt = Date.now();
+      for (const name of names) {
+        if (Object.hasOwn(quarantinedMcp, name)) continue;
+        quarantinedMcp[name] = {
+          reason: "local-mvp",
+          originalEnabled: disabled.originalEnabledByName[name],
+          quarantinedAt,
+        };
+        quarantineChanged = true;
+      }
+      if (quarantineChanged) {
+        await runtimeMcpPolicyQuarantineStore.set(config, workspaceId, {
+          schemaVersion: 1,
+          mcp: quarantinedMcp,
+        });
+      }
+    }
+    if (disabled.changed) next = { ...next, mcp: disabled.mcp };
+  }
   const now = Date.now();
   const configJson = runtimeOpencodeConfigStore.serialize(next);
   if (row?.valueJson === configJson) {
@@ -297,28 +453,70 @@ export async function writeRuntimeOpencodeConfig(
   return { config: next, changed: true };
 }
 
+export async function prepareRuntimeOpencodeConfigForProduct(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
+  return await writeRuntimeOpencodeConfig(config, workspaceId, (current) => current);
+}
+
 export function mergeOpencodeConfigs(
   persisted: Record<string, unknown>,
   runtime: RuntimeOpencodeConfig,
+  productPolicy?: ServerProductPolicy,
 ): Record<string, unknown> {
   const persistedPermission = isRecord(persisted.permission) ? persisted.permission : {};
   const persistedExternalDirectory = isRecord(persistedPermission.external_directory)
     ? persistedPermission.external_directory
     : {};
+  const mcp: Record<string, Record<string, unknown>> = {
+    ...mcpMapFromUnknown(persisted.mcp),
+    ...runtimeMcpMap(runtime),
+  };
+  const localMvp = isLocalMvpProduct(productPolicy);
+  const persistedPlugins = Array.isArray(persisted.plugin)
+    ? persisted.plugin.filter((item) => typeof item === "string")
+    : [];
+  const disabledProviders = [
+    ...(Array.isArray(persisted.disabled_providers)
+      ? persisted.disabled_providers.filter((item) => typeof item === "string")
+      : []),
+    ...runtimeDisabledProviderList(runtime),
+  ].filter((item, index, list) => list.indexOf(item) === index);
+  const providers = {
+    ...(isRecord(persisted.provider) ? persisted.provider : {}),
+    ...(isRecord(runtime.provider) ? runtime.provider : {}),
+  };
+  const experimental = isRecord(persisted.experimental)
+    ? persisted.experimental
+    : {};
+  const runtimeExperimental = isRecord(runtime.experimental)
+    ? runtime.experimental
+    : {};
   return {
     ...persisted,
-    plugin: [
-      ...(Array.isArray(persisted.plugin) ? persisted.plugin.filter((item) => typeof item === "string") : []),
-      ...runtimePluginList(runtime),
-    ],
-    disabled_providers: [
-      ...(Array.isArray(persisted.disabled_providers) ? persisted.disabled_providers.filter((item) => typeof item === "string") : []),
-      ...runtimeDisabledProviderList(runtime),
-    ].filter((item, index, list) => list.indexOf(item) === index),
-    mcp: {
-      ...(isRecord(persisted.mcp) ? persisted.mcp : {}),
-      ...runtimeMcpMap(runtime),
-    },
+    ...(localMvp
+      ? {
+          autoupdate: false,
+          share: "disabled",
+          experimental: {
+            ...experimental,
+            ...runtimeExperimental,
+            openTelemetry: false,
+          },
+        }
+      : Object.keys(runtimeExperimental).length
+      ? { experimental: { ...experimental, ...runtimeExperimental } }
+      : {}),
+    plugin: localMvp
+      ? []
+      : [...persistedPlugins, ...runtimePluginList(runtime)],
+    disabled_providers: localMvp
+      ? withLocalMvpRequiredDisabledProviders(disabledProviders)
+      : disabledProviders,
+    mcp: localMvp
+      ? withoutOpenworkCloudMcp(mcp)
+      : mcp,
     permission: {
       ...persistedPermission,
       external_directory: {
@@ -326,7 +524,13 @@ export function mergeOpencodeConfigs(
         ...runtimeExternalDirectory(runtime),
       },
     },
-    ...(runtime.provider ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtime.provider } } : {}),
+    ...(Object.keys(providers).length
+      ? {
+          provider: localMvp
+            ? withoutLocalMvpBlockedProviders(providers)
+            : providers,
+        }
+      : {}),
     ...(runtime.default_agent ? { default_agent: runtime.default_agent } : {}),
   };
 }

@@ -1,10 +1,12 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
+import type { DesktopApprovalCredentialService } from "./desktop-approval-credentials.js";
+import type { ServerProductPolicy } from "./product-policy.js";
 
 export type WorkspaceType = "local" | "remote";
 
 export type RemoteType = "opencode" | "openwork";
 
-export type ApprovalMode = "manual" | "auto";
+export type ApprovalMode = "manual" | "auto" | "trusted-local-ui";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
 
@@ -81,6 +83,11 @@ export interface ApprovalConfig {
   timeoutMs: number;
 }
 
+export type QuarantinedLocalOpencodeWorkspaceConfig = Readonly<{
+  workspaceId: string;
+  config: Readonly<Record<string, unknown>>;
+}>;
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -101,6 +108,31 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
+  /** Immutable build policy projected into the server process. */
+  productPolicy?: ServerProductPolicy;
+  /**
+   * Remote records excluded from the effective local runtime. They remain
+   * available only for fail-closed lookup and must never be contacted.
+   */
+  quarantinedRemoteWorkspaces?: WorkspaceInfo[];
+  /**
+   * Original remote workspace JSON records, including fields unknown to this
+   * build. Persistence writes these values back verbatim so enforcing the
+   * local profile is reversible and does not destroy future/upstream data.
+   */
+  quarantinedRemoteWorkspaceConfigs?: ReadonlyArray<
+    Readonly<Record<string, unknown>>
+  >;
+  /**
+   * Raw local workspace records whose OpenCode connection fields were removed
+   * from the effective local runtime. Persistence merges these records back by
+   * workspace ID so quarantine is reversible without reactivating them.
+   */
+  quarantinedLocalOpencodeWorkspaceConfigs?: ReadonlyArray<
+    QuarantinedLocalOpencodeWorkspaceConfig
+  >;
+  /** Process-local issuer/verifier. Never serialized or persisted. */
+  desktopApprovalCredentials?: DesktopApprovalCredentialService;
 }
 
 export interface Capabilities {
@@ -199,10 +231,13 @@ export interface CommandItem {
 }
 
 export interface Actor {
-  type: "remote" | "host";
+  type: "api" | "desktop" | "remote" | "host";
   clientId?: string;
   tokenHash?: string;
   scope?: TokenScope;
+  webContentsId?: number;
+  workspaceId?: string;
+  operation?: string;
 }
 
 export interface ApprovalRequest {

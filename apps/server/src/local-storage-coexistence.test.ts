@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { LOCAL_MVP_FEATURES } from "@openwork/product-config";
 import { auditLogPath, recordAudit } from "./audit.js";
 import { listCommands } from "./commands.js";
 import { resolveServerConfig } from "./config.js";
@@ -38,7 +39,9 @@ import { TokenService } from "./tokens.js";
 
 const LOCAL_MVP_POLICY = {
   profile: "local-mvp",
-  features: { legacyOpenWorkImport: false },
+  features: LOCAL_MVP_FEATURES,
+  networkPolicy: "user-authorized",
+  rendererOrigin: "agencyai-internal://renderer",
 } satisfies ServerProductPolicy;
 
 const roots: string[] = [];

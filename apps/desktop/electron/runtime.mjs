@@ -581,6 +581,45 @@ export function resolveRuntimeRemoteAccessEnabled(
   return allowRemoteAccess === true && requested === true;
 }
 
+function immutableRuntimeProductPolicy(productPolicy) {
+  if (!productPolicy || typeof productPolicy !== "object" || Array.isArray(productPolicy)) {
+    return null;
+  }
+  const features =
+    productPolicy.features && typeof productPolicy.features === "object" && !Array.isArray(productPolicy.features)
+      ? Object.freeze({ ...productPolicy.features })
+      : Object.freeze({});
+  return Object.freeze({
+    ...productPolicy,
+    features,
+  });
+}
+
+function exactRuntimeOrigin(value, label) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`${label} must be an absolute origin`);
+  }
+  if (
+    !parsed.protocol ||
+    !parsed.host ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname !== "" && parsed.pathname !== "/") ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(`${label} must not include credentials, path, query, or fragment`);
+  }
+  return parsed.origin === "null"
+    ? `${parsed.protocol}//${parsed.host}`
+    : parsed.origin;
+}
+
 export function createRuntimeManager({
   app,
   desktopRoot,
@@ -588,7 +627,20 @@ export function createRuntimeManager({
   storageLayout = null,
   storageEnvironment = {},
   allowRemoteAccess = true,
+  productPolicy = null,
+  trustedRendererOrigin = null,
+  embeddedServerModuleLoader = null,
 }) {
+  const runtimeProductPolicy = immutableRuntimeProductPolicy(productPolicy);
+  const localMvpRuntime = runtimeProductPolicy?.profile === "local-mvp";
+  const runtimeTrustedRendererOrigin = exactRuntimeOrigin(
+    trustedRendererOrigin ?? runtimeProductPolicy?.rendererOrigin ?? null,
+    "trustedRendererOrigin",
+  );
+  if (localMvpRuntime && !runtimeTrustedRendererOrigin) {
+    throw new Error("local-mvp runtime requires an exact trustedRendererOrigin");
+  }
+  const runtimeAllowRemoteAccess = localMvpRuntime ? false : allowRemoteAccess;
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -1156,10 +1208,20 @@ export function createRuntimeManager({
   // In-process server handle. Kept alive across restarts so we can stop it.
   let inProcessServer = null;
 
+  async function revokeAllDesktopApprovalGrants() {
+    const handle = inProcessServer;
+    if (!handle || typeof handle.revokeAllDesktopApprovalGrants !== "function") {
+      return 0;
+    }
+    const result = await handle.revokeAllDesktopApprovalGrants();
+    return Number.isSafeInteger(result) && result >= 0 ? result : 0;
+  }
+
   async function startOpenworkServer(options) {
     const currentPort = openworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
+      try { await revokeAllDesktopApprovalGrants(); } catch { /* ignore */ }
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
@@ -1167,7 +1229,7 @@ export function createRuntimeManager({
 
     const remoteAccessEnabled = resolveRuntimeRemoteAccessEnabled(
       options.remoteAccessEnabled,
-      allowRemoteAccess,
+      runtimeAllowRemoteAccess,
     );
     const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
@@ -1209,22 +1271,30 @@ export function createRuntimeManager({
       ? [devPath, ...packagedPaths]
       : [...packagedPaths, devPath];
     const embeddedPath = candidates.find((candidate) => existsSync(candidate));
-    if (!embeddedPath) {
+    if (!embeddedPath && typeof embeddedServerModuleLoader !== "function") {
       throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
-    const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
+    const embeddedModule = typeof embeddedServerModuleLoader === "function"
+      ? await embeddedServerModuleLoader({ candidates, embeddedPath: embeddedPath ?? null })
+      : await import(embeddedServerImportUrl(embeddedPath));
+    const startEmbeddedServer = embeddedModule?.startEmbeddedServer;
+    if (typeof startEmbeddedServer !== "function") {
+      throw new Error("Embedded OpenWork server module does not export startEmbeddedServer");
+    }
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
     const handle = await startEmbeddedServer({
       host,
       port: portSelection.port,
-      corsOrigins: ["*"],
-      approvalMode: "auto",
+      corsOrigins: runtimeTrustedRendererOrigin ? [runtimeTrustedRendererOrigin] : ["*"],
+      approvalMode: localMvpRuntime ? "trusted-local-ui" : "auto",
       configPath: serverConfigPath,
       workspaces: workspacePaths,
       token: tokens.clientToken,
       hostToken: tokens.hostToken,
+      ...(runtimeProductPolicy ? { productPolicy: runtimeProductPolicy } : {}),
+      ...(runtimeTrustedRendererOrigin ? { trustedRendererOrigin: runtimeTrustedRendererOrigin } : {}),
       opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
       opencodeDirectory: activeWorkspace || undefined,
       manageOpencode: options.manageOpencode === true,
@@ -1442,6 +1512,7 @@ export function createRuntimeManager({
   async function stopAllRuntimeChildren() {
     // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
+      try { await revokeAllDesktopApprovalGrants(); } catch { /* ignore */ }
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
@@ -1500,7 +1571,7 @@ export function createRuntimeManager({
     // EADDRINUSE and leaving the runtime in error -> boot screen.
     const requestedRemoteAccess = resolveRuntimeRemoteAccessEnabled(
       options.openworkRemoteAccess,
-      allowRemoteAccess,
+      runtimeAllowRemoteAccess,
     );
     if (
       options.forceRestart !== true &&
@@ -1563,7 +1634,7 @@ export function createRuntimeManager({
       typeof options.openworkRemoteAccess === "boolean"
         ? options.openworkRemoteAccess
         : openworkServerState.remoteAccessEnabled,
-      allowRemoteAccess,
+      runtimeAllowRemoteAccess,
     );
     return engineStart(projectDir, {
       runtime: engineState.runtime,
@@ -1591,6 +1662,87 @@ export function createRuntimeManager({
     return snapshotOpenworkServerState(openworkServerState);
   }
 
+  async function desktopApprovalGrant(input = {}) {
+    const handle = inProcessServer;
+    if (
+      !openworkServerState.inProcess ||
+      !openworkServerState.baseUrl ||
+      !handle
+    ) {
+      throw new Error("Embedded OpenWork server is not running");
+    }
+    if (!localMvpRuntime || !runtimeTrustedRendererOrigin) {
+      throw new Error("Desktop approval grants require the local-mvp product policy");
+    }
+    if (typeof handle.issueDesktopApprovalGrant !== "function") {
+      throw new Error("Embedded OpenWork server does not support desktop approval grants");
+    }
+
+    const workspaceId = String(input?.workspaceId ?? "").trim();
+    const operation = String(input?.operation ?? "").trim();
+    const webContentsId = Number(input?.webContentsId);
+    if (!workspaceId) throw new Error("workspaceId is required");
+    if (!operation) throw new Error("operation is required");
+    if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
+      throw new Error("webContentsId must be a positive safe integer");
+    }
+    if (
+      Array.isArray(handle.config?.workspaces) &&
+      !handle.config.workspaces.some((workspace) => workspace?.id === workspaceId)
+    ) {
+      throw new Error(`Workspace ${workspaceId} is not registered with the embedded server`);
+    }
+
+    const bearerToken =
+      openworkServerState.ownerToken?.trim() ||
+      openworkServerState.clientToken?.trim() ||
+      "";
+    if (!bearerToken) {
+      throw new Error("Embedded OpenWork server did not expose a bearer token");
+    }
+    const serverOrigin = exactRuntimeOrigin(openworkServerState.baseUrl, "OpenWork server URL");
+    if (!serverOrigin) {
+      throw new Error("Embedded OpenWork server did not expose a valid origin");
+    }
+
+    const grant = await handle.issueDesktopApprovalGrant({
+      bearerToken,
+      rendererOrigin: runtimeTrustedRendererOrigin,
+      serverOrigin,
+      webContentsId,
+      workspaceId,
+      operation,
+    });
+    if (
+      !grant ||
+      typeof grant.credential !== "string" ||
+      !grant.credential ||
+      typeof grant.credentialId !== "string" ||
+      !grant.credentialId ||
+      grant.serverOrigin !== serverOrigin ||
+      grant.workspaceId !== workspaceId ||
+      grant.operation !== operation ||
+      !Number.isFinite(grant.issuedAt) ||
+      !Number.isFinite(grant.expiresAt) ||
+      grant.expiresAt <= grant.issuedAt
+    ) {
+      throw new Error("Embedded OpenWork server returned an invalid desktop approval grant");
+    }
+    return grant;
+  }
+
+  async function revokeDesktopApprovalGrantsForWebContents(webContentsId) {
+    if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
+      throw new Error("webContentsId must be a positive safe integer");
+    }
+    const handle = inProcessServer;
+    if (!handle || typeof handle.revokeDesktopApprovalGrantsForWebContents !== "function") {
+      return 0;
+    }
+    const result = await handle.revokeDesktopApprovalGrantsForWebContents(webContentsId);
+    return Number.isSafeInteger(result) && result >= 0 ? result : 0;
+  }
+
   async function openworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
@@ -1603,7 +1755,7 @@ export function createRuntimeManager({
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: resolveRuntimeRemoteAccessEnabled(
         options.remoteAccessEnabled,
-        allowRemoteAccess,
+        runtimeAllowRemoteAccess,
       ),
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
@@ -2017,6 +2169,9 @@ export function createRuntimeManager({
     engineDoctor,
     engineInstall,
     openworkServerInfo,
+    desktopApprovalGrant,
+    revokeDesktopApprovalGrantsForWebContents,
+    revokeAllDesktopApprovalGrants,
     openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
     orchestratorStatus,
     orchestratorWorkspaceActivate,

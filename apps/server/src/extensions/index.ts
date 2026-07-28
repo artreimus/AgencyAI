@@ -23,6 +23,10 @@ const OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS = [
   ...OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
 ];
 
+export type ExperimentalExtensionPolicy = {
+  googleWorkspace: boolean;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -33,16 +37,31 @@ function readStringField(value: unknown, key: string): string {
   return typeof field === "string" ? field.trim() : "";
 }
 
-export function listExperimentalExtensionActions(extensionId: string, connectSnapshot?: ConnectSnapshot) {
+export function listExperimentalExtensionActions(
+  extensionId: string,
+  connectSnapshot?: ConnectSnapshot,
+  policy: ExperimentalExtensionPolicy = { googleWorkspace: true },
+) {
   const filter = extensionId.trim();
+  const registered = policy.googleWorkspace
+    ? OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS
+    : OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS.filter(
+        (action) => action.extensionId !== GOOGLE_WORKSPACE_EXTENSION_ID,
+      );
   const actions = filter
-    ? OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS.filter((action) => action.extensionId === filter)
-    : OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS;
+    ? registered.filter((action) => action.extensionId === filter)
+    : registered;
   if (!connectSnapshot || !shouldGateLegacyGoogleWorkspace(connectSnapshot)) return actions;
   return actions.filter((action) => action.extensionId !== GOOGLE_WORKSPACE_EXTENSION_ID || action.action === "status");
 }
 
-export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot) {
+export async function callExperimentalExtensionAction(
+  config: ServerConfig,
+  env: EnvService,
+  input: unknown,
+  connectSnapshot?: ConnectSnapshot,
+  policy: ExperimentalExtensionPolicy = { googleWorkspace: true },
+) {
   if (!isRecord(input)) {
     throw new ApiError(400, "invalid_payload", "Expected extension action call payload");
   }
@@ -52,6 +71,9 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
   const context = isRecord(input.context) ? input.context : {};
   if (!extensionId || !action) {
     throw new ApiError(400, "invalid_payload", "extensionId and action are required");
+  }
+  if (!policy.googleWorkspace && extensionId === GOOGLE_WORKSPACE_EXTENSION_ID) {
+    throw new ApiError(404, "feature_disabled", "Google Workspace is disabled");
   }
   const registered = OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS.find((item) => item.extensionId === extensionId && item.action === action);
   if (!registered) {

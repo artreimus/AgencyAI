@@ -84,12 +84,21 @@ export async function createManagedOpencodeServer(options: {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  corsOrigins?: string[];
 }): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
   const username = randomSecret();
   const password = randomSecret();
-  const args = ["serve", "--hostname", hostname, "--port", String(port), "--cors", "*"];
+  const corsOrigins = options.corsOrigins?.filter((origin) => origin.trim()) ?? ["*"];
+  const args = [
+    "serve",
+    "--hostname",
+    hostname,
+    "--port",
+    String(port),
+    ...corsOrigins.flatMap((origin) => ["--cors", origin]),
+  ];
   const command = options.bin?.trim() || "opencode";
   const env = {
     ...process.env,

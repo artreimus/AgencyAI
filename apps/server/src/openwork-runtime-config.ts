@@ -16,16 +16,24 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
+  openworkPluginPath,
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
+import { withoutOpenworkCloudMcp } from "./mcp-product-policy.js";
+import { isLocalMvpProduct } from "./product-policy.js";
+import {
+  withLocalMvpRequiredDisabledProviders,
+  withoutLocalMvpBlockedProviders,
+} from "./opencode-runtime-product-policy.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   onRuntimeOpencodeConfigWrite,
+  prepareRuntimeOpencodeConfigForProduct,
   readRuntimeOpencodeConfig,
   runtimeDisabledProviderList,
   runtimeMcpMap,
@@ -84,27 +92,96 @@ Manage: to show what is saved, discover and execute the list capability (getMemo
 
 Never persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.`;
 
+const AGENCYAI_AGENT_PROMPT = `You are AgencyAI.
+
+When the user refers to "you", they mean the AgencyAI desktop app and the current local workspace.
+
+Your job:
+- Help the user work on local files safely.
+- Automate repeatable work with the providers, MCP servers, and skills the user configured.
+- Keep behavior portable, reviewable, and reproducible.
+
+## Durable project context
+
+Store shareable behavior in version-controlled workspace files such as .opencode/skills/**, .opencode/agents/**, and project documentation. Keep credentials, tokens, local configuration, and logs out of the repository.
+
+## Working style
+
+- If required setup or credentials are missing, ask one targeted question and continue once provided.
+- If you change code, run the smallest meaningful test.
+- If steps repeat, factor them into a local skill.
+- Prefer clear, practical steps over abstract explanations.
+- Treat external network access as user-authorized only when it is required by a configured provider, MCP server, or browser task.
+
+## Artifacts
+
+AgencyAI can work with standard artifacts in the current workspace.
+
+- Prefer standard output files for user-visible deliverables: Markdown (.md), CSV (.csv), Excel workbooks (.xlsx), PowerPoint decks (.pptx), PDF files (.pdf), and browser previews (index.html or a local http://localhost:<port> URL).
+- After creating or updating an artifact, mention its exact workspace-relative path.
+- Do not invent workspace paths unless a tool returns them.
+- For websites or UI previews, start a local development server when useful and mention its loopback URL.`;
+
+function localRuntimePluginList(): string[] {
+  return [
+    "opencode-chrome-devtools",
+    openworkPluginPath("agencyai-local-extensions"),
+    openworkPluginPath("agencyai-local-capabilities"),
+    openworkOfficeAttachmentsPluginPath(),
+    openworkAnthropicAdaptiveThinkingPluginPath(),
+    openworkAnthropicToolSchemaPluginPath(),
+    // The policy hook must run last so a preceding user plugin cannot
+    // reintroduce an MCP that the local product profile excludes.
+    openworkPluginPath("agencyai-local-policy"),
+  ];
+}
+
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
+  if (config && workspaceId) {
+    await prepareRuntimeOpencodeConfigForProduct(config, workspaceId);
+  }
   const runtimeConfig = config && workspaceId ? await readRuntimeOpencodeConfig(config, workspaceId) : {};
-  return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+  return buildOpenworkRuntimeConfigObjectFromSnapshot(
+    runtimeConfig,
+    isLocalMvpProduct(config?.productPolicy),
+  );
 }
 
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
+  localMvp = false,
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
+  const agentName = localMvp ? "agencyai" : "openwork";
+  const defaultAgent = localMvp
+    && runtimeConfig.default_agent?.trim().toLowerCase() === "openwork"
+    ? agentName
+    : runtimeConfig.default_agent ?? agentName;
   return {
     ...runtimeConfig,
-    default_agent: runtimeConfig.default_agent ?? "openwork",
+    ...(localMvp
+      ? {
+          autoupdate: false,
+          share: "disabled",
+          experimental: {
+            ...(isRecord(runtimeConfig.experimental)
+              ? runtimeConfig.experimental
+              : {}),
+            openTelemetry: false,
+          },
+          provider: withoutLocalMvpBlockedProviders(runtimeConfig.provider),
+        }
+      : {}),
+    default_agent: defaultAgent,
     agent: {
-      openwork: {
-        description: "OpenWork default agent",
+      [agentName]: {
+        description: localMvp ? "AgencyAI local desktop agent" : "OpenWork default agent",
         mode: "primary",
         temperature: 0.2,
-        prompt: OPENWORK_AGENT_PROMPT,
+        prompt: localMvp ? AGENCYAI_AGENT_PROMPT : OPENWORK_AGENT_PROMPT,
         permission: {
           skill: {
             // OpenWork supplies its own current skill routing and no longer
@@ -118,17 +195,27 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         },
       },
     },
-    plugin: [
-      "opencode-chrome-devtools",
-      openworkExtensionsPreviewPluginPath(),
-      openworkCapabilitiesKnowledgePluginPath(),
-      openworkOfficeAttachmentsPluginPath(),
-      openworkAnthropicAdaptiveThinkingPluginPath(),
-      openworkAnthropicToolSchemaPluginPath(),
-      ...runtimePluginList(runtimeConfig),
-    ],
-    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
-    mcp: runtimeMcpMap(runtimeConfig),
+    plugin: localMvp
+      ? localRuntimePluginList()
+      : [
+          "opencode-chrome-devtools",
+          openworkExtensionsPreviewPluginPath(),
+          openworkCapabilitiesKnowledgePluginPath(),
+          openworkOfficeAttachmentsPluginPath(),
+          openworkAnthropicAdaptiveThinkingPluginPath(),
+          openworkAnthropicToolSchemaPluginPath(),
+          ...runtimePluginList(runtimeConfig),
+        ],
+    ...((localMvp || disabledProviders.length)
+      ? {
+          disabled_providers: localMvp
+            ? withLocalMvpRequiredDisabledProviders(disabledProviders)
+            : disabledProviders,
+        }
+      : {}),
+    mcp: localMvp
+      ? withoutOpenworkCloudMcp(runtimeMcpMap(runtimeConfig))
+      : runtimeMcpMap(runtimeConfig),
   };
 }
 

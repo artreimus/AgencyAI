@@ -56,6 +56,16 @@ const executableExtensions = new Set([
 
 const documentaryExtensions = new Set([".md", ".mdx", ".rst", ".txt"]);
 const documentaryBasenames = new Set(["COPYING", "LICENSE", "NOTICE"]);
+const stagedJavaScriptExtensions = new Set([
+  ".cjs",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".mts",
+  ".ts",
+  ".tsx",
+]);
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
@@ -372,9 +382,38 @@ function decodeQuotedLiteral(source) {
   return result;
 }
 
-function quotedLiterals(line) {
+function quotedLiterals(line, state = null) {
   const result = [];
-  for (let index = 0; index < line.length; index += 1) {
+  let index = 0;
+
+  if (state?.templateSource) {
+    let source = state.templateSource;
+    let escaped = false;
+    for (; index < line.length; index += 1) {
+      const character = line[index];
+      source += character;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (character !== "`") continue;
+      const value = decodeQuotedLiteral(source);
+      if (value !== null) result.push({ source, value });
+      state.templateSource = null;
+      index += 1;
+      break;
+    }
+    if (state.templateSource) {
+      state.templateSource = `${source}\n`;
+      return result;
+    }
+  }
+
+  for (; index < line.length; index += 1) {
     const quote = line[index];
     if (quote !== '"' && quote !== "'" && quote !== "`") continue;
     let cursor = index + 1;
@@ -391,7 +430,13 @@ function quotedLiterals(line) {
       }
       if (character === quote) break;
     }
-    if (cursor >= line.length) continue;
+    if (cursor >= line.length) {
+      if (quote === "`" && state) {
+        state.templateSource = `${line.slice(index)}\n`;
+        break;
+      }
+      continue;
+    }
     const source = line.slice(index, cursor + 1);
     const value = decodeQuotedLiteral(source);
     if (value !== null) result.push({ source, value });
@@ -569,7 +614,6 @@ function acquisitionEvidence(line, staticValues) {
 
   const words = [
     lowerLine,
-    ...quotedLiterals(line).map(({ value }) => value.toLowerCase()),
     ...staticValues.map((value) => value.toLowerCase()),
   ].join(" ");
   const command =
@@ -615,16 +659,29 @@ function contentFindingField(repoPath, staged) {
   return "content";
 }
 
+function scanRawLineForRestrictedPath(repoPath, staged) {
+  if (!staged) return true;
+  // Minifiers may emit a short identifier followed by division, which is not a path.
+  // Shipped JavaScript paths remain covered through parsed literals, static
+  // path calls, package markers, and the staged path/symlink walk.
+  const extension = path.posix.extname(
+    repoPath.replaceAll("\\", "/"),
+  ).toLowerCase();
+  return !stagedJavaScriptExtensions.has(extension);
+}
+
 function scanTextContent(content, repoPath, options = {}) {
   const staged = options.staged === true;
   const allowDocumentaryReference = options.allowDocumentaryReference === true;
   const findings = [];
   const bindings = new Map();
+  const quotedLiteralState = { templateSource: null };
   const lines = content.split(/\r?\n/);
 
   for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1;
-    const literals = quotedLiterals(line).map(({ value }) => value);
+    const literals = quotedLiterals(line, quotedLiteralState)
+      .map(({ value }) => value);
     const boundValue = recordStaticBinding(line, bindings);
     const staticPathValues = staticPathCallValues(line, bindings);
     const staticValues = [
@@ -635,7 +692,10 @@ function scanTextContent(content, repoPath, options = {}) {
     if (boundValue !== null) staticValues.push(boundValue);
 
     const restrictedPath =
-      hasRestrictedPathSegment(line) ||
+      (
+        scanRawLineForRestrictedPath(repoPath, staged) &&
+        hasRestrictedPathSegment(line)
+      ) ||
       staticValues.some((value) => hasRestrictedPathSegment(value)) ||
       hasBareRestrictedPathContext(line, repoPath, staticPathValues);
     const restrictedPackageReference =

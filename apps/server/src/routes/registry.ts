@@ -14,6 +14,13 @@ export interface RequestContext {
   reloadEvents: ReloadEventStore;
   tokens: TokenService;
   actor?: Actor;
+  /** Raw one-request transport material; never stored in pending approvals. */
+  desktopApprovalTransport?: {
+    credential: string;
+    bearerToken: string;
+    rendererOrigin: string;
+    serverOrigin: string;
+  };
 }
 
 export interface Route {

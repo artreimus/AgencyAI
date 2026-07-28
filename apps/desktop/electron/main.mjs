@@ -76,6 +76,560 @@ import {
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
 
+/* DESKTOP_APPROVAL_POLICY_HELPERS_START */
+const SUPPORTED_DESKTOP_APPROVAL_OPERATIONS = Object.freeze([
+  "config.runtime_migrate",
+  "config.patch",
+  "config.write",
+  "skills.upsert",
+  "skills.delete",
+  "mcp.add",
+  "mcp.remove",
+  "mcp.enable",
+  "mcp.disable",
+  "commands.upsert",
+  "commands.delete",
+  "config.import",
+  "workspace.inbox.upload",
+  "workspace.files.session.ops",
+  "workspace.file.write",
+]);
+const supportedDesktopApprovalOperations = new Set(
+  SUPPORTED_DESKTOP_APPROVAL_OPERATIONS,
+);
+
+function desktopApprovalUrlOrigin(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (
+      !url.protocol ||
+      !url.host ||
+      url.username ||
+      url.password
+    ) {
+      return null;
+    }
+    return url.origin === "null"
+      ? `${url.protocol}//${url.host}`
+      : url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function rawUrlHostname(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const schemeSeparator = raw.indexOf("://");
+  if (schemeSeparator <= 0) return "";
+  const authority = raw
+    .slice(schemeSeparator + 3)
+    .split(/[/?#]/, 1)[0];
+  if (!authority || authority.includes("@")) return "";
+  if (authority.startsWith("[")) {
+    const end = authority.indexOf("]");
+    return end > 0 ? authority.slice(0, end + 1).toLowerCase() : "";
+  }
+  const portSeparator = authority.lastIndexOf(":");
+  return (portSeparator >= 0
+    ? authority.slice(0, portSeparator)
+    : authority).toLowerCase();
+}
+
+function exactLoopbackHttpOrigin(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const rawHostname = rawUrlHostname(value);
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(rawHostname)) {
+    return null;
+  }
+  try {
+    const url = new URL(value.trim());
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username ||
+      url.password ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname.toLowerCase())
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{
+ *   productProfile: { brand?: { rendererScheme?: string } },
+ *   isPackaged: boolean,
+ *   env?: Record<string, string | undefined>,
+ * }} options
+ */
+export function resolveDesktopApprovalTrustedRendererOrigin({
+  productProfile,
+  isPackaged,
+  env = {},
+}) {
+  const rendererScheme = typeof productProfile?.brand?.rendererScheme === "string"
+    ? productProfile.brand.rendererScheme.trim()
+    : "";
+  if (!rendererScheme) {
+    throw new Error("Desktop approval policy requires a renderer scheme");
+  }
+  const internalOrigin = `${rendererScheme}://renderer`;
+  if (isPackaged) return internalOrigin;
+
+  const startUrl =
+    (typeof env.OPENWORK_ELECTRON_START_URL === "string"
+      ? env.OPENWORK_ELECTRON_START_URL.trim()
+      : "") ||
+    (typeof env.ELECTRON_START_URL === "string"
+      ? env.ELECTRON_START_URL.trim()
+      : "");
+  return exactLoopbackHttpOrigin(startUrl) ?? internalOrigin;
+}
+
+export function isSupportedDesktopApprovalOperation(value) {
+  return typeof value === "string" &&
+    value === value.trim() &&
+    supportedDesktopApprovalOperations.has(value);
+}
+
+export function assertDesktopApprovalIpcSender({
+  event,
+  mainWindow,
+  trustedRendererOrigin,
+}) {
+  const trustedOrigin = desktopApprovalUrlOrigin(trustedRendererOrigin);
+  if (!trustedOrigin || trustedOrigin !== trustedRendererOrigin) {
+    throw new Error("Desktop approval denied: invalid trusted renderer origin");
+  }
+  if (
+    !mainWindow ||
+    typeof mainWindow.isDestroyed !== "function" ||
+    mainWindow.isDestroyed()
+  ) {
+    throw new Error("Desktop approval denied: main window is unavailable");
+  }
+
+  const sender = event?.sender;
+  const windowWebContents = mainWindow.webContents;
+  if (
+    !sender ||
+    sender !== windowWebContents ||
+    typeof sender.isDestroyed !== "function" ||
+    sender.isDestroyed()
+  ) {
+    throw new Error("Desktop approval denied: IPC sender is not the live main window");
+  }
+
+  const senderFrame = event?.senderFrame;
+  if (!senderFrame || sender.mainFrame !== senderFrame) {
+    throw new Error("Desktop approval denied: IPC sender is not the main frame");
+  }
+
+  const frameOrigin = desktopApprovalUrlOrigin(senderFrame.url);
+  const currentOrigin = typeof sender.getURL === "function"
+    ? desktopApprovalUrlOrigin(sender.getURL())
+    : null;
+  if (
+    frameOrigin !== trustedOrigin ||
+    currentOrigin !== trustedOrigin
+  ) {
+    throw new Error("Desktop approval denied: renderer origin is not trusted");
+  }
+
+  const webContentsId = Number(sender.id);
+  if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
+    throw new Error("Desktop approval denied: invalid WebContents identity");
+  }
+  return webContentsId;
+}
+
+function selectedLocalWorkspaceId(workspaceState) {
+  const selectedId = typeof workspaceState?.selectedId === "string"
+    ? workspaceState.selectedId.trim()
+    : "";
+  const activeId = typeof workspaceState?.activeId === "string"
+    ? workspaceState.activeId.trim()
+    : "";
+  if (!selectedId && !activeId) {
+    throw new Error("Desktop approval denied: no workspace is selected");
+  }
+  if (selectedId && activeId && selectedId !== activeId) {
+    throw new Error("Desktop approval denied: workspace selection is stale");
+  }
+
+  const workspaceId = selectedId || activeId;
+  const matches = Array.isArray(workspaceState?.workspaces)
+    ? workspaceState.workspaces.filter(
+        (workspace) => workspace?.id === workspaceId,
+      )
+    : [];
+  if (matches.length !== 1) {
+    throw new Error("Desktop approval denied: selected workspace is stale");
+  }
+  const workspace = matches[0];
+  if (
+    workspace.workspaceType !== "local" ||
+    typeof workspace.path !== "string" ||
+    !workspace.path.trim()
+  ) {
+    throw new Error("Desktop approval denied: selected workspace is not local");
+  }
+  return workspaceId;
+}
+
+function assertActiveLocalDesktopRuntime(runtimeInfo) {
+  const bearerToken =
+    (typeof runtimeInfo?.ownerToken === "string"
+      ? runtimeInfo.ownerToken.trim()
+      : "") ||
+    (typeof runtimeInfo?.clientToken === "string"
+      ? runtimeInfo.clientToken.trim()
+      : "");
+  let baseUrl;
+  try {
+    baseUrl = new URL(String(runtimeInfo?.baseUrl ?? ""));
+  } catch {
+    baseUrl = null;
+  }
+  if (
+    runtimeInfo?.running !== true ||
+    runtimeInfo?.remoteAccessEnabled !== false ||
+    runtimeInfo?.host !== "127.0.0.1" ||
+    !baseUrl ||
+    baseUrl.protocol !== "http:" ||
+    baseUrl.hostname !== "127.0.0.1" ||
+    !baseUrl.port ||
+    baseUrl.username ||
+    baseUrl.password ||
+    (baseUrl.pathname !== "" && baseUrl.pathname !== "/") ||
+    baseUrl.search ||
+    baseUrl.hash ||
+    !bearerToken
+  ) {
+    throw new Error("Desktop approval denied: local runtime is not active");
+  }
+}
+
+export function resolveDesktopApprovalRequestContext({
+  request,
+  workspaceState,
+  runtimeInfo,
+  webContentsId,
+}) {
+  const workspaceId = typeof request?.workspaceId === "string"
+    ? request.workspaceId
+    : "";
+  if (!workspaceId || workspaceId !== workspaceId.trim()) {
+    throw new Error("Desktop approval denied: invalid workspace");
+  }
+  const operation = request?.operation;
+  if (!isSupportedDesktopApprovalOperation(operation)) {
+    throw new Error("Desktop approval denied: unsupported operation");
+  }
+  if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
+    throw new Error("Desktop approval denied: invalid WebContents identity");
+  }
+
+  const selectedWorkspaceId = selectedLocalWorkspaceId(workspaceState);
+  if (workspaceId !== selectedWorkspaceId) {
+    throw new Error("Desktop approval denied: request does not match the selected workspace");
+  }
+  assertActiveLocalDesktopRuntime(runtimeInfo);
+
+  return {
+    workspaceId,
+    operation,
+    webContentsId,
+  };
+}
+
+const AGENCYAI_DESKTOP_APPROVAL_HEADER = "X-AgencyAI-Desktop-Approval";
+const DESKTOP_FETCH_MAX_ENVELOPE_BYTES = 250_000_000;
+const DESKTOP_FETCH_MAX_MULTIPART_PARTS = 64;
+const DESKTOP_FETCH_MAX_FIELD_BYTES = 1_000_000;
+const DESKTOP_FETCH_MAX_HEADERS = 128;
+const DESKTOP_FETCH_MAX_HEADER_VALUE_LENGTH = 65_536;
+
+function normalizeDesktopFetchHeaders(value) {
+  if (
+    value !== undefined &&
+    (value === null || typeof value !== "object" || Array.isArray(value))
+  ) {
+    throw new Error("Desktop fetch denied: headers must be a string record");
+  }
+  const entries = value ? Object.entries(value) : [];
+  if (entries.length > DESKTOP_FETCH_MAX_HEADERS) {
+    throw new Error("Desktop fetch denied: too many headers");
+  }
+
+  const headers = new Headers();
+  for (const [name, headerValue] of entries) {
+    if (
+      typeof headerValue !== "string" ||
+      headerValue.length > DESKTOP_FETCH_MAX_HEADER_VALUE_LENGTH
+    ) {
+      throw new Error("Desktop fetch denied: invalid header value");
+    }
+    try {
+      headers.set(name, headerValue);
+    } catch {
+      throw new Error("Desktop fetch denied: invalid header");
+    }
+  }
+  if (headers.has(AGENCYAI_DESKTOP_APPROVAL_HEADER)) {
+    throw new Error(
+      "Desktop fetch denied: approval header must be injected by Electron",
+    );
+  }
+  return headers;
+}
+
+function normalizeDesktopFetchContentType(value) {
+  if (value === undefined) return null;
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value !== value.trim() ||
+    value.length > 256 ||
+    /[\r\n\u0000]/.test(value)
+  ) {
+    throw new Error("Desktop fetch denied: invalid content type");
+  }
+  const probe = new Headers();
+  try {
+    probe.set("Content-Type", value);
+  } catch {
+    throw new Error("Desktop fetch denied: invalid content type");
+  }
+  return value;
+}
+
+function normalizeMultipartName(value, label, maxLength) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value !== value.trim() ||
+    value.length > maxLength ||
+    /[\r\n\u0000]/.test(value)
+  ) {
+    throw new Error(`Desktop fetch denied: invalid ${label}`);
+  }
+  return value;
+}
+
+function copyDesktopFetchBytes(value) {
+  if (!(value instanceof Uint8Array)) {
+    throw new Error("Desktop fetch denied: binary payload must be Uint8Array");
+  }
+  if (value.byteLength > DESKTOP_FETCH_MAX_ENVELOPE_BYTES) {
+    throw new Error("Desktop fetch denied: binary payload is too large");
+  }
+  return new Uint8Array(value);
+}
+
+function reconstructDesktopFetchEnvelope(envelope, headers) {
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    throw new Error("Desktop fetch denied: invalid body envelope");
+  }
+
+  if (envelope.kind === "binary") {
+    const bytes = copyDesktopFetchBytes(envelope.bytes);
+    const contentType = normalizeDesktopFetchContentType(envelope.contentType);
+    const headerContentType = headers.get("Content-Type");
+    if (
+      contentType &&
+      headerContentType &&
+      headerContentType !== contentType
+    ) {
+      throw new Error("Desktop fetch denied: conflicting content types");
+    }
+    if (contentType) headers.set("Content-Type", contentType);
+    headers.delete("Content-Length");
+    return bytes;
+  }
+
+  if (envelope.kind !== "multipart" || !Array.isArray(envelope.parts)) {
+    throw new Error("Desktop fetch denied: invalid body envelope kind");
+  }
+  if (
+    envelope.parts.length === 0 ||
+    envelope.parts.length > DESKTOP_FETCH_MAX_MULTIPART_PARTS
+  ) {
+    throw new Error("Desktop fetch denied: invalid multipart part count");
+  }
+
+  const form = new FormData();
+  let totalBytes = 0;
+  for (const part of envelope.parts) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      throw new Error("Desktop fetch denied: invalid multipart part");
+    }
+    const name = normalizeMultipartName(part.name, "multipart field name", 256);
+    if (part.kind === "field") {
+      if (typeof part.value !== "string") {
+        throw new Error("Desktop fetch denied: invalid multipart field value");
+      }
+      const fieldBytes = new TextEncoder().encode(part.value).byteLength;
+      if (fieldBytes > DESKTOP_FETCH_MAX_FIELD_BYTES) {
+        throw new Error("Desktop fetch denied: multipart field is too large");
+      }
+      totalBytes += fieldBytes;
+      if (totalBytes > DESKTOP_FETCH_MAX_ENVELOPE_BYTES) {
+        throw new Error("Desktop fetch denied: multipart payload is too large");
+      }
+      form.append(name, part.value);
+      continue;
+    }
+    if (part.kind !== "file") {
+      throw new Error("Desktop fetch denied: invalid multipart part kind");
+    }
+    const fileName = normalizeMultipartName(
+      part.fileName,
+      "multipart file name",
+      4_096,
+    );
+    const contentType =
+      normalizeDesktopFetchContentType(part.contentType) ??
+      "application/octet-stream";
+    const bytes = copyDesktopFetchBytes(part.bytes);
+    totalBytes += bytes.byteLength;
+    if (totalBytes > DESKTOP_FETCH_MAX_ENVELOPE_BYTES) {
+      throw new Error("Desktop fetch denied: multipart payload is too large");
+    }
+    form.append(name, new Blob([bytes], { type: contentType }), fileName);
+  }
+
+  // Chromium/Undici must generate the multipart boundary from the reconstructed
+  // FormData. A renderer-provided Content-Type would omit or mismatch it.
+  headers.delete("Content-Type");
+  headers.delete("Content-Length");
+  return form;
+}
+
+/**
+ * @param {{
+ *   url: unknown,
+ *   init?: import("@openwork/types/desktop-ipc").DesktopFetchInit,
+ *   event: unknown,
+ *   mainWindow: unknown,
+ *   trustedRendererOrigin: string,
+ *   runtimeInfo?: import("@openwork/types/desktop-ipc").OpenworkServerInfo | null,
+ * }} options
+ * @returns {{ url: string, requestInit: RequestInit }}
+ */
+export function prepareDesktopFetchRequest({
+  url,
+  init = {},
+  event,
+  mainWindow,
+  trustedRendererOrigin,
+  runtimeInfo = null,
+}) {
+  if (!init || typeof init !== "object" || Array.isArray(init)) {
+    throw new Error("Desktop fetch denied: invalid request options");
+  }
+  const requestUrl = typeof url === "string" ? url.trim() : "";
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(requestUrl);
+  } catch {
+    throw new Error("Desktop fetch denied: URL must be absolute");
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("Desktop fetch denied: URL protocol is not supported");
+  }
+
+  const method = init.method === undefined ? undefined : init.method;
+  if (
+    method !== undefined &&
+    (typeof method !== "string" ||
+      !method ||
+      method !== method.trim() ||
+      !/^[A-Za-z]+$/.test(method))
+  ) {
+    throw new Error("Desktop fetch denied: invalid method");
+  }
+  const headers = normalizeDesktopFetchHeaders(init.headers);
+  if (init.body !== undefined && typeof init.body !== "string") {
+    throw new Error("Desktop fetch denied: text body must be a string");
+  }
+  if (init.body !== undefined && init.bodyEnvelope !== undefined) {
+    throw new Error("Desktop fetch denied: request body is ambiguous");
+  }
+
+  const hasEnvelope = init.bodyEnvelope !== undefined;
+  const hasDesktopApproval = init.desktopApprovalCredential !== undefined;
+  if (hasEnvelope || hasDesktopApproval) {
+    assertDesktopApprovalIpcSender({
+      event,
+      mainWindow,
+      trustedRendererOrigin,
+    });
+  }
+
+  /** @type {BodyInit | undefined} */
+  let body = init.body;
+  if (hasEnvelope) {
+    body = reconstructDesktopFetchEnvelope(init.bodyEnvelope, headers);
+  }
+
+  /** @type {RequestRedirect | undefined} */
+  let redirect;
+  if (hasDesktopApproval) {
+    const credential = init.desktopApprovalCredential;
+    if (
+      typeof credential !== "string" ||
+      !/^aai_da_[A-Za-z0-9_-]{43}$/.test(credential)
+    ) {
+      throw new Error("Desktop fetch denied: invalid approval credential");
+    }
+    assertActiveLocalDesktopRuntime(runtimeInfo);
+    const runtimeOrigin = desktopApprovalUrlOrigin(runtimeInfo.baseUrl);
+    if (!runtimeOrigin || parsedUrl.origin !== runtimeOrigin) {
+      throw new Error("Desktop fetch denied: protected target is not the active runtime");
+    }
+
+    const expectedBearer =
+      (typeof runtimeInfo.ownerToken === "string"
+        ? runtimeInfo.ownerToken.trim()
+        : "") ||
+      (typeof runtimeInfo.clientToken === "string"
+        ? runtimeInfo.clientToken.trim()
+        : "");
+    if (headers.get("Authorization") !== `Bearer ${expectedBearer}`) {
+      throw new Error("Desktop fetch denied: bearer token does not match the approval grant");
+    }
+    const suppliedOrigin = headers.get("Origin");
+    if (
+      suppliedOrigin !== null &&
+      suppliedOrigin !== trustedRendererOrigin
+    ) {
+      throw new Error("Desktop fetch denied: renderer Origin header is not trusted");
+    }
+
+    headers.set(AGENCYAI_DESKTOP_APPROVAL_HEADER, credential);
+    headers.set("Origin", trustedRendererOrigin);
+    redirect = "error";
+  }
+
+  /** @type {RequestInit} */
+  const requestInit = {
+    method,
+    headers,
+    body,
+    credentials: "omit",
+    ...(redirect ? { redirect } : {}),
+  };
+  return {
+    url: parsedUrl.toString(),
+    requestInit,
+  };
+}
+/* DESKTOP_APPROVAL_POLICY_HELPERS_END */
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
@@ -97,6 +651,11 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const PRODUCT_PROFILE = getBuildProductProfile();
+const TRUSTED_RENDERER_ORIGIN = resolveDesktopApprovalTrustedRendererOrigin({
+  productProfile: PRODUCT_PROFILE,
+  isPackaged: app.isPackaged,
+  env: process.env,
+});
 applyDesktopProductEnvironmentPolicy({
   productProfile: PRODUCT_PROFILE,
   isPackaged: app.isPackaged,
@@ -1167,11 +1726,27 @@ const runtimeManager = createRuntimeManager({
   storageLayout,
   storageEnvironment: storageLayoutEnvironment(storageLayout),
   allowRemoteAccess: PRODUCT_PROFILE.features.remoteAccess,
+  productPolicy: PRODUCT_PROFILE,
+  trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
 });
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
 let runtimeBootstrapPromise = null;
+let desktopApprovalContextEpoch = 0;
+
+async function revokeDesktopApprovalGrantsBeforeRuntimeChange() {
+  desktopApprovalContextEpoch += 1;
+  await runtimeManager.revokeAllDesktopApprovalGrants();
+}
+
+function revokeDesktopApprovalGrantsForWebContents(webContentsId) {
+  desktopApprovalContextEpoch += 1;
+  if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) return;
+  void runtimeManager
+    .revokeDesktopApprovalGrantsForWebContents(webContentsId)
+    .catch(() => undefined);
+}
 
 function showShutdownScreen() {
   const win = mainWindow;
@@ -1595,15 +2170,19 @@ const desktopCommandHandlers = {
       return workspaceStore.readWorkspaceState();
   },
   "workspaceSetSelected": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.setSelectedWorkspace(typeof args[0] === "string" ? args[0] : "");
   },
   "workspaceSetRuntimeActive": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.setRuntimeActiveWorkspace(typeof args[0] === "string" && args[0].trim() ? args[0] : null);
   },
   "workspaceCreate": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.createWorkspace(args[0] ?? {});
   },
   "workspaceCreateRemote": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.createRemoteWorkspace(args[0] ?? {});
   },
   "workspaceUpdateRemote": async (event, ...args) => {
@@ -1613,6 +2192,7 @@ const desktopCommandHandlers = {
       return workspaceStore.updateWorkspaceDisplayName(args[0] ?? {});
   },
   "workspaceForget": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.forgetWorkspace(String(args[0] ?? "").trim());
   },
   "workspaceAddAuthorizedRoot": async (event, ...args) => {
@@ -1631,6 +2211,7 @@ const desktopCommandHandlers = {
       return workspaceStore.exportConfig(args[0] ?? {});
   },
   "workspaceImportConfig": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.importConfig(args[0] ?? {});
   },
   "opencodeCommandList": async (event, ...args) => {
@@ -1653,9 +2234,11 @@ const desktopCommandHandlers = {
   "engineStart": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const options = args[1] ?? {};
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return runtimeManager.engineStart(projectDir, options);
   },
   "prepareFreshRuntime": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return runtimeManager.prepareFreshRuntime();
   },
   "runtimeBootstrap": async (event, ...args) => {
@@ -1665,9 +2248,11 @@ const desktopCommandHandlers = {
       return runtimeManager.runtimeStatus();
   },
   "engineStop": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return runtimeManager.engineStop();
   },
   "engineRestart": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return runtimeManager.engineRestart(args[0] ?? {});
   },
   "engineInfo": async (event, ...args) => {
@@ -1852,7 +2437,50 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "openworkServerRestart": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return runtimeManager.openworkServerRestart(args[0] ?? {});
+  },
+  "desktopApprovalGrant": async (event, ...args) => {
+      const webContentsId = assertDesktopApprovalIpcSender({
+        event,
+        mainWindow,
+        trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+      });
+      const contextEpoch = desktopApprovalContextEpoch;
+      const runtimeInfo = await runtimeManager.openworkServerInfo();
+      const workspaceState = await workspaceStore.readWorkspaceState();
+      if (contextEpoch !== desktopApprovalContextEpoch) {
+        throw new Error("Desktop approval denied: renderer context changed");
+      }
+      assertDesktopApprovalIpcSender({
+        event,
+        mainWindow,
+        trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+      });
+      const context = resolveDesktopApprovalRequestContext({
+        request: args[0],
+        workspaceState,
+        runtimeInfo,
+        webContentsId,
+      });
+
+      const grant = await runtimeManager.desktopApprovalGrant(context);
+      try {
+        if (contextEpoch !== desktopApprovalContextEpoch) {
+          throw new Error("Desktop approval denied: renderer context changed");
+        }
+        assertDesktopApprovalIpcSender({
+          event,
+          mainWindow,
+          trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+        });
+      } catch (error) {
+        await runtimeManager
+          .revokeDesktopApprovalGrantsForWebContents(webContentsId)
+          .catch(() => undefined);
+        throw error;
+      }
+      return grant;
   },
   "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
@@ -1980,6 +2608,7 @@ const desktopCommandHandlers = {
       );
   },
   "resetOpenworkState": async (event, ...args) => {
+      await revokeDesktopApprovalGrantsBeforeRuntimeChange();
       return workspaceStore.resetOpenworkState();
   },
   "resetOpencodeCache": async (event, ...args) => {
@@ -2140,27 +2769,33 @@ const desktopCommandHandlers = {
       }
   },
   "__fetch": async (event, ...args) => {
-      const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
-      if (!url) throw new Error("URL is required.");
+      const runtimeInfo = init.desktopApprovalCredential === undefined
+        ? null
+        : await runtimeManager.openworkServerInfo();
+      const prepared = prepareDesktopFetchRequest({
+        url: args[0],
+        init,
+        event,
+        mainWindow,
+        trustedRendererOrigin: TRUSTED_RENDERER_ORIGIN,
+        runtimeInfo,
+      });
       /** @type {RequestInit} */
       const requestInit = {
-        method: typeof init.method === "string" ? init.method : undefined,
-        headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-        body: typeof init.body === "string" ? init.body : undefined,
-        credentials: "omit",
+        ...prepared.requestInit,
         cache: "no-store",
       };
       if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
         return fetchAgentContextDiagnosticsResponse(
           electronNet.fetch,
-          url,
+          prepared.url,
           requestInit,
           init.agentContextDiagnostics.deadlineAtMs,
         );
       }
       const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
+      const response = await electronNet.fetch(prepared.url, {
         ...requestInit,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
@@ -2332,6 +2967,8 @@ async function createMainWindow() {
       plugins: true,
     },
   });
+  const mainWindowWebContents = mainWindow.webContents;
+  const mainWindowWebContentsId = mainWindowWebContents.id;
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
@@ -2351,8 +2988,15 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
+    revokeDesktopApprovalGrantsForWebContents(mainWindowWebContentsId);
     browserPanel.destroy();
     mainWindow = null;
+  });
+  mainWindowWebContents.on("render-process-gone", () => {
+    revokeDesktopApprovalGrantsForWebContents(mainWindowWebContentsId);
+  });
+  mainWindowWebContents.once("destroyed", () => {
+    revokeDesktopApprovalGrantsForWebContents(mainWindowWebContentsId);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -2389,6 +3033,9 @@ async function createMainWindow() {
   // (#2000). Catch those at `did-start-navigation`, cancel the load, and
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (isMainFrame) {
+      revokeDesktopApprovalGrantsForWebContents(mainWindowWebContentsId);
+    }
     if (!isMainFrame || isInPlace) return;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     try {

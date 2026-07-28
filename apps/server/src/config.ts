@@ -5,6 +5,11 @@ import {
   resolveLocalStorageLayoutPath,
 } from "./storage-layout-env.js";
 import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
+import {
+  isLocalMvpProduct,
+  resolveServerProductPolicy,
+  type ServerProductPolicy,
+} from "./product-policy.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -28,6 +33,10 @@ export interface CliArgs {
   logRequests?: boolean;
   version?: boolean;
   help?: boolean;
+  /** In-process callers may narrow, but never broaden, the compiled policy. */
+  productPolicy?: ServerProductPolicy;
+  /** Exact renderer origin supplied only by an in-process desktop host. */
+  trustedRendererOrigin?: string;
 }
 
 interface FileConfig {
@@ -68,6 +77,48 @@ function parseBoolean(value: string | undefined): boolean | undefined {
   if (["true", "1", "yes", "on"].includes(normalized)) return true;
   if (["false", "0", "no", "off"].includes(normalized)) return false;
   return undefined;
+}
+
+function localLoopbackOpencodeOrigin(value: string | undefined): string | undefined {
+  const candidate = value?.trim();
+  if (!candidate) return undefined;
+  try {
+    const url = new URL(candidate);
+    const hostname = url.hostname.toLowerCase();
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:")
+      || url.username
+      || url.password
+      || (url.pathname !== "" && url.pathname !== "/")
+      || url.search
+      || url.hash
+      || (
+        hostname !== "127.0.0.1"
+        && hostname !== "localhost"
+        && hostname !== "::1"
+        && hostname !== "[::1]"
+      )
+    ) {
+      return undefined;
+    }
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasWorkspaceOpencodeConnection(
+  workspace: Pick<
+    WorkspaceConfig,
+    "baseUrl" | "directory" | "opencodeUsername" | "opencodePassword"
+  >,
+): boolean {
+  return Boolean(
+    workspace.baseUrl?.trim()
+    || workspace.directory?.trim()
+    || workspace.opencodeUsername?.trim()
+    || workspace.opencodePassword?.trim(),
+  );
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -128,7 +179,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (value === "--approval") {
       const mode = argv[index + 1] as ApprovalMode | undefined;
-      if (mode === "manual" || mode === "auto") args.approvalMode = mode;
+      if (mode === "manual" || mode === "auto" || mode === "trusted-local-ui") {
+        args.approvalMode = mode;
+      }
       index += 1;
       continue;
     }
@@ -187,7 +240,7 @@ export function printHelp(): void {
     "  --port <port>            Port (default 8787)",
     "  --token <token>          Client bearer token",
     "  --host-token <token>     Host approval token",
-    "  --approval <mode>        manual | auto",
+    "  --approval <mode>        manual | auto | trusted-local-ui",
     "  --approval-timeout <ms>  Approval timeout",
     "  --opencode-base-url <url> OpenCode base URL to share",
     "  --opencode-directory <path> OpenCode workspace directory to share",
@@ -211,6 +264,8 @@ async function loadFileConfig(configPath: string): Promise<FileConfig> {
 }
 
 export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
+  const productPolicy = resolveServerProductPolicy(cli.productPolicy);
+  const localMvp = isLocalMvpProduct(productPolicy);
   const localConfigPath = resolveLocalStorageLayoutPath(
     "OPENWORK_SERVER_CONFIG",
   );
@@ -236,15 +291,35 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
       : envWorkspaces.length > 0
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
+  const sourceWorkspaceConfigs = workspaceConfigs.map(
+    (workspace) => ({ ...workspace }) as Record<string, unknown>,
+  );
 
   const envOpencodeBaseUrl = process.env.OPENWORK_OPENCODE_BASE_URL;
   const envOpencodeDirectory = process.env.OPENWORK_OPENCODE_DIRECTORY;
   const envOpencodeUsername = process.env.OPENWORK_OPENCODE_USERNAME;
   const envOpencodePassword = process.env.OPENWORK_OPENCODE_PASSWORD;
-  const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl ?? fileConfig.opencodeBaseUrl;
-  const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory ?? fileConfig.opencodeDirectory;
-  const opencodeUsername = cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
-  const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
+  const configuredOpencodeBaseUrl =
+    cli.opencodeBaseUrl ?? envOpencodeBaseUrl ?? fileConfig.opencodeBaseUrl;
+  const configuredOpencodeDirectory =
+    cli.opencodeDirectory ?? envOpencodeDirectory ?? fileConfig.opencodeDirectory;
+  const configuredOpencodeUsername =
+    cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
+  const configuredOpencodePassword =
+    cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
+  const localOpencodeBaseUrl = localMvp
+    ? localLoopbackOpencodeOrigin(configuredOpencodeBaseUrl)
+    : configuredOpencodeBaseUrl;
+  const opencodeBaseUrl = localOpencodeBaseUrl;
+  const opencodeDirectory = localMvp && !localOpencodeBaseUrl
+    ? undefined
+    : configuredOpencodeDirectory;
+  const opencodeUsername = localMvp && !localOpencodeBaseUrl
+    ? undefined
+    : configuredOpencodeUsername;
+  const opencodePassword = localMvp && !localOpencodeBaseUrl
+    ? undefined
+    : configuredOpencodePassword;
 
   if (workspaceConfigs.length > 0 && (opencodeBaseUrl || opencodeDirectory || opencodeUsername || opencodePassword)) {
     const allowDirectoryOverride = workspaceConfigs.length === 1 && opencodeDirectory;
@@ -261,7 +336,61 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     });
   }
 
-  const workspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
+  const resolvedWorkspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
+  const quarantinedRemoteWorkspaces = localMvp
+    ? resolvedWorkspaces.filter((workspace) => workspace.workspaceType === "remote")
+    : [];
+  const quarantinedRemoteWorkspaceConfigs = localMvp
+    ? resolvedWorkspaces.flatMap((workspace, index) =>
+        workspace.workspaceType === "remote"
+          ? [sourceWorkspaceConfigs[index] ?? {}]
+          : [])
+    : [];
+  const quarantinedLocalOpencodeWorkspaceConfigs = localMvp
+    ? resolvedWorkspaces.flatMap((workspace, index) => {
+        if (
+          workspace.workspaceType === "remote"
+          || localLoopbackOpencodeOrigin(workspace.baseUrl)
+          || !hasWorkspaceOpencodeConnection(workspace)
+        ) {
+          return [];
+        }
+        const source = sourceWorkspaceConfigs[index] ?? {};
+        const sourceConnection = {
+          baseUrl: typeof source.baseUrl === "string" ? source.baseUrl : undefined,
+          directory: typeof source.directory === "string" ? source.directory : undefined,
+          opencodeUsername: typeof source.opencodeUsername === "string"
+            ? source.opencodeUsername
+            : undefined,
+          opencodePassword: typeof source.opencodePassword === "string"
+            ? source.opencodePassword
+            : undefined,
+        };
+        return hasWorkspaceOpencodeConnection(sourceConnection)
+          ? [{ workspaceId: workspace.id, config: source }]
+          : [];
+      })
+    : [];
+  const workspaces = (localMvp
+    ? resolvedWorkspaces.filter((workspace) => workspace.workspaceType !== "remote")
+    : resolvedWorkspaces
+  ).map((workspace) => {
+    if (!localMvp) return workspace;
+    const allowedBaseUrl = localLoopbackOpencodeOrigin(workspace.baseUrl);
+    if (!allowedBaseUrl) {
+      return {
+        ...workspace,
+        baseUrl: undefined,
+        directory: undefined,
+        opencodeUsername: undefined,
+        opencodePassword: undefined,
+      };
+    }
+    return {
+      ...workspace,
+      baseUrl: allowedBaseUrl,
+    };
+  });
 
   const tokenFromEnv = process.env.OPENWORK_TOKEN;
   const hostTokenFromEnv = process.env.OPENWORK_HOST_TOKEN;
@@ -298,13 +427,54 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     DEFAULT_TIMEOUT_MS;
 
   const approval: ApprovalConfig = {
-    mode: approvalMode === "auto" ? "auto" : "manual",
+    mode: localMvp
+      ? approvalMode === "trusted-local-ui"
+        ? "trusted-local-ui"
+        : "manual"
+      : approvalMode === "auto"
+        ? "auto"
+        : approvalMode === "trusted-local-ui"
+          ? "trusted-local-ui"
+          : "manual",
     timeoutMs: Number.isNaN(approvalTimeoutMs) ? DEFAULT_TIMEOUT_MS : approvalTimeoutMs,
   };
 
   const envCorsOrigins = process.env.OPENWORK_CORS_ORIGINS;
   const parsedEnvCors = envCorsOrigins ? parseList(envCorsOrigins) : null;
-  const corsOrigins = cli.corsOrigins ?? parsedEnvCors ?? fileConfig.corsOrigins ?? ["*"];
+  const trustedRendererOrigin = (() => {
+    if (!cli.trustedRendererOrigin?.trim()) return productPolicy.rendererOrigin;
+    try {
+      const url = new URL(cli.trustedRendererOrigin);
+      if (
+        url.username
+        || url.password
+        || (url.pathname !== "" && url.pathname !== "/")
+        || url.search
+        || url.hash
+      ) {
+        return productPolicy.rendererOrigin;
+      }
+      const origin = url.origin === "null"
+        ? `${url.protocol}//${url.host}`
+        : url.origin;
+      const hostname = url.hostname.toLowerCase();
+      const loopbackDevOrigin = (url.protocol === "http:" || url.protocol === "https:")
+        && (
+          hostname === "127.0.0.1"
+          || hostname === "localhost"
+          || hostname === "::1"
+          || hostname === "[::1]"
+        );
+      return origin === productPolicy.rendererOrigin || loopbackDevOrigin
+        ? origin
+        : productPolicy.rendererOrigin;
+    } catch {
+      return productPolicy.rendererOrigin;
+    }
+  })();
+  const corsOrigins = localMvp
+    ? [trustedRendererOrigin]
+    : cli.corsOrigins ?? parsedEnvCors ?? fileConfig.corsOrigins ?? ["*"];
 
   const envReadOnly = process.env.OPENWORK_READONLY;
   const parsedReadOnly = envReadOnly
@@ -327,7 +497,9 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
       ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
       : workspaces.map((workspace) => workspace.path);
 
-  const host = cli.host ?? process.env.OPENWORK_HOST ?? fileConfig.host ?? DEFAULT_HOST;
+  const host = localMvp
+    ? DEFAULT_HOST
+    : cli.host ?? process.env.OPENWORK_HOST ?? fileConfig.host ?? DEFAULT_HOST;
   const port = cli.port ?? (process.env.OPENWORK_PORT ? Number(process.env.OPENWORK_PORT) : undefined) ?? fileConfig.port ?? DEFAULT_PORT;
 
   return {
@@ -350,5 +522,15 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
+    productPolicy,
+    ...(quarantinedRemoteWorkspaces.length > 0
+      ? { quarantinedRemoteWorkspaces }
+      : {}),
+    ...(quarantinedRemoteWorkspaceConfigs.length > 0
+      ? { quarantinedRemoteWorkspaceConfigs }
+      : {}),
+    ...(quarantinedLocalOpencodeWorkspaceConfigs.length > 0
+      ? { quarantinedLocalOpencodeWorkspaceConfigs }
+      : {}),
   };
 }
