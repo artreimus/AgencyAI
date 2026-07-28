@@ -28,6 +28,13 @@ const actionCommands = Object.freeze({
     ["run", "test:eval-runner"],
     ["--filter", "openwork-server", "build"],
     ["--filter", "@openwork/app", "build"],
+    [
+      "--filter",
+      "@openwork/desktop",
+      "exec",
+      "node",
+      "./scripts/stage-agencyai-docs.mjs",
+    ],
     ["--filter", "@openwork/desktop", "check:electron"],
     ["run", "check:outbound-access"],
     ["run", "check:local-profile"],

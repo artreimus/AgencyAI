@@ -138,6 +138,7 @@ test("the test action contains the complete fast verification matrix", () => {
       "pnpm run test:eval-runner",
       "pnpm --filter openwork-server build",
       "pnpm --filter @openwork/app build",
+      "pnpm --filter @openwork/desktop exec node ./scripts/stage-agencyai-docs.mjs",
       "pnpm --filter @openwork/desktop check:electron",
       "pnpm run check:outbound-access",
       "pnpm run check:local-profile",

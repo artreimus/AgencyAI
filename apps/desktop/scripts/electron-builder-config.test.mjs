@@ -350,10 +350,22 @@ test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release creden
     "utf8",
   );
   assert.match(workflow, /runs-on: macos-14/);
+  assert.match(workflow, /runs-on: macos-15/);
   assert.match(workflow, /test "\$\(uname -m\)" = arm64/);
+  assert.match(
+    workflow,
+    /git -C "\$source_root" fetch --depth=1 origin "\$source_commit"/,
+  );
+  assert.match(workflow, /OPENCODE_VERSION: "1\.17\.11"/);
+  assert.match(workflow, /test "\$OPENCODE_VERSION" = "\$binary_version"/);
+  assert.match(workflow, /sourceBinarySha256/);
+  assert.match(workflow, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
   assert.match(workflow, /pnpm package:local:dir/);
   assert.match(workflow, /pnpm --filter @openwork\/desktop smoke:packaged/);
-  assert.doesNotMatch(workflow, /self-hosted|CSC_|APPLE_|notari[sz]e|secrets\./i);
+  assert.doesNotMatch(
+    workflow,
+    /self-hosted|CSC_|APPLE_|notari[sz]e|secrets\.|GH_TOKEN|github\.token/i,
+  );
   assert.doesNotMatch(
     workflow,
     /gh release|contents:\s*write|release-desktop|MACOS_NOTARIZE/i,
