@@ -311,6 +311,22 @@ describe("desktop approval runtime plumbing", () => {
     assert.equal(info.connectUrl, null);
   });
 
+  it("restarts local-mvp by re-resolving the verified bundled OpenCode binary", async () => {
+    const harness = await createHarness();
+
+    await harness.runtime.openworkServerRestart();
+    const firstLaunch = harness.launchOptions[0];
+    await harness.runtime.openworkServerRestart();
+    const secondLaunch = harness.launchOptions[1];
+
+    assert.equal(harness.launchOptions.length, 2);
+    assert.equal(secondLaunch.opencodeBin, firstLaunch.opencodeBin);
+    assert.match(
+      secondLaunch.opencodeBin,
+      new RegExp(`opencode-${currentTargetTriple()}`),
+    );
+  });
+
   it("issues against the active handle with the exact origins and renderer-exposed owner bearer", async () => {
     const harness = await createHarness();
     await harness.runtime.openworkServerRestart();

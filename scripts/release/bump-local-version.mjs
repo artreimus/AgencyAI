@@ -31,13 +31,27 @@ export function bumpLocalVersion(version) {
     const filePath = resolve(repoRoot, relativePath);
     const manifest = JSON.parse(readFileSync(filePath, "utf8"));
     manifest.version = nextVersion;
+    if (relativePath === "apps/orchestrator/package.json") {
+      invariant(
+        manifest.dependencies?.["openwork-server"] === "workspace:*",
+        "Orchestrator must resolve openwork-server only from this workspace",
+      );
+    }
     writeFileSync(filePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
-  const result = spawnSync(
-    process.platform === "win32" ? "pnpm.cmd" : "pnpm",
-    ["install", "--lockfile-only"],
+  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  let result = spawnSync(
+    pnpm,
+    ["install", "--lockfile-only", "--offline"],
     { cwd: repoRoot, stdio: "inherit" },
   );
+  if (result.status !== 0 && !result.error) {
+    result = spawnSync(
+      pnpm,
+      ["install", "--lockfile-only"],
+      { cwd: repoRoot, stdio: "inherit" },
+    );
+  }
   if (result.error) throw result.error;
   invariant(result.status === 0, "pnpm failed to refresh the lockfile");
   return { version: nextVersion, files: packageFiles };

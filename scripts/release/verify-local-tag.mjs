@@ -26,6 +26,10 @@ export function verifyLocalTag(tag, { requireClean = true } = {}) {
   ).version;
   const expectedTag = `agencyai-desktop-v${version}`;
   invariant(tag === expectedTag, `Expected exact release tag ${expectedTag}`);
+  invariant(
+    git(["cat-file", "-t", `refs/tags/${tag}`]) === "tag",
+    "AgencyAI desktop releases require an annotated tag",
+  );
   const tagCommit = git(["rev-list", "-n", "1", `refs/tags/${tag}`]);
   const headCommit = git(["rev-parse", "HEAD"]);
   invariant(

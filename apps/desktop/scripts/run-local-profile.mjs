@@ -98,6 +98,10 @@ export function resolveLocalProfileAction(
               repoRoot,
               "scripts/release/local-release-policy.test.mjs",
             ),
+            resolve(
+              repoRoot,
+              "scripts/release/stage-macos-release-assets.test.mjs",
+            ),
           ],
         }]
       : []),

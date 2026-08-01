@@ -21,6 +21,13 @@ describe("local renderer composition", () => {
     expect(settings).not.toContain("createDenClient");
   });
 
+  test("loads settings workspaces from the live local server when the desktop store is empty", async () => {
+    const settings = await source("settings-route-local.tsx");
+    expect(settings).toContain("serverClient.listWorkspaces()");
+    expect(settings).toContain("mergeRouteWorkspaces(");
+    expect(settings).toContain("waitForOpenworkConnection({ timeoutMs: 15_000 })");
+  });
+
   test("selects the local root before cloud startup code executes", async () => {
     const entry = await Bun.file(
       new URL("../src/index.react.tsx", import.meta.url),

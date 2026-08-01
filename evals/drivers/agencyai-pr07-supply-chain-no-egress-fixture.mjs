@@ -456,7 +456,7 @@ async function frameUnsignedCiBoundary(root, check) {
     },
   );
   check.expect(
-    workflow.includes("runs-on: macos-14")
+    workflow.includes("runs-on: macos-15")
       && workflow.includes('test "$(uname -m)" = arm64')
       && !workflow.includes("self-hosted"),
     "CI uses a GitHub-hosted arm64 macOS runner",
@@ -475,7 +475,7 @@ async function frameUnsignedCiBoundary(root, check) {
     "CI uploads proof only and release helpers remain review-only policy checks",
   );
   return {
-    runner: "GitHub-hosted macos-14 arm64",
+    runner: "GitHub-hosted macos-15 arm64",
     signing: false,
     notarization: false,
     publicRelease: false,

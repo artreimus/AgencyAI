@@ -2,8 +2,8 @@ name: Legacy Alpha Channel (upstream compatibility only)
 
 # This inherited workflow is retained for upstream comparison, not as the
 # AgencyAI release lane. It has no automatic trigger and is fail-closed:
-# only different-ai/openwork can opt in to a manual run. PR07 will introduce
-# a separate AgencyAI release lane after the local desktop MVP is validated.
+# only different-ai/openwork can opt in to a manual run. AgencyAI releases use
+# the separate fail-closed release-desktop-local.yml workflow.
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
     if: >-
       github.repository == 'different-ai/openwork' &&
       inputs.enable_legacy_upstream_publish == true
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 180
 
     env:

@@ -79,8 +79,8 @@ jobs:
           fi
 
           ALL='[
-            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"OpenWork-Installer-mac-arm64.dmg"},
-            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"OpenWork-Installer-mac-x64.dmg"},
+            {"platform_id":"mac-arm64","runner":"macos-15","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"OpenWork-Installer-mac-arm64.dmg"},
+            {"platform_id":"mac-x64","runner":"macos-15","os_type":"macos","bun_target":"bun-darwin-x64","asset":"OpenWork-Installer-mac-x64.dmg"},
             {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"OpenWork-Installer-win-x64.exe"}
           ]'
           MATRIX=$(jq -cn --arg csv "$PLATFORMS" --argjson all "$ALL" \

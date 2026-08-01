@@ -150,7 +150,7 @@ export function LocalAboutView({
       <section className="overflow-hidden rounded-3xl border border-border bg-muted/20">
         <div className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center">
           <img
-            src="/agencyai-mark.svg"
+            src="/agencyai-mark.png"
             alt="AgencyAI"
             className="size-20 rounded-[22px] shadow-sm"
           />

@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import {
-  AgencyAiLocalPolicy,
-  enforceAgencyAiLocalMcpPolicy,
-} from "./agencyai-local-policy.js";
+import { AgencyAiLocalPolicy } from "./agencyai-local-policy.js";
 
 describe("AgencyAI local OpenCode policy plugin", () => {
   test("removes exact normalized cloud entries after config merge", async () => {
+    const plugin = await AgencyAiLocalPolicy();
     const ordinary = { type: "remote", url: "https://ordinary.example/mcp" };
     const config: { mcp: Record<string, unknown> } = {
       mcp: {
@@ -16,14 +14,13 @@ describe("AgencyAI local OpenCode policy plugin", () => {
       },
     };
 
-    enforceAgencyAiLocalMcpPolicy(config);
+    await plugin.config(config);
 
     expect(config.mcp).toEqual({
       "openwork-cloud-dev": ordinary,
       posthog: ordinary,
     });
 
-    const plugin = await AgencyAiLocalPolicy();
     const reintroduced: {
       mcp: Record<string, unknown>;
       instructions: string[];
@@ -53,5 +50,10 @@ describe("AgencyAI local OpenCode policy plugin", () => {
     expect(reintroduced.skills as unknown).toEqual({
       paths: ["./local-skills"],
     });
+  });
+
+  test("module exposes only the plugin factory", async () => {
+    const mod = await import("./agencyai-local-policy.js");
+    expect(Object.keys(mod)).toEqual(["AgencyAiLocalPolicy"]);
   });
 });

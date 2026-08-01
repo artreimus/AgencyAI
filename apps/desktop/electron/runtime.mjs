@@ -2251,7 +2251,12 @@ export function createRuntimeManager({
         runtimeAllowRemoteAccess,
       ),
       manageOpencode: shouldManageOpencode,
-      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
+      // local-mvp must always re-resolve the verified bundled runtime. Feeding
+      // its previously resolved path back through this option makes the strict
+      // custom-binary guard reject our own managed OpenCode during a restart.
+      opencodeBinPath: localMvpRuntime
+        ? null
+        : engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
   }
 

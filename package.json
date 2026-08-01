@@ -50,7 +50,11 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "release:local:bump": "node scripts/release/bump-local-version.mjs",
+    "release:local:review": "node scripts/release/review-local-release.mjs",
+    "release:local:verify-tag": "node scripts/release/verify-local-tag.mjs",
+    "release:local:stage": "node scripts/release/stage-macos-release-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

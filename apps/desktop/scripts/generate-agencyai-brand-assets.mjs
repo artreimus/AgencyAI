@@ -3,7 +3,9 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,8 +16,8 @@ const desktopRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const rendererPublic = resolve(repoRoot, "apps/app/public");
 const iconRoot = resolve(desktopRoot, "resources/icons");
-const productionMark = resolve(rendererPublic, "agencyai-mark.svg");
-const developmentMark = resolve(iconRoot, "dev/agencyai-mark-dev.svg");
+const productionMark = resolve(iconRoot, "agencyai-icon-source.png");
+const rendererMark = resolve(rendererPublic, "agencyai-mark.png");
 
 function run(command, args) {
   const result = spawnSync(command, args, {
@@ -40,17 +42,36 @@ function rasterize(source, size, output) {
 }
 
 function createIcns(source, output, temporaryRoot) {
-  const iconset = join(temporaryRoot, `${Date.now()}-${Math.random()}.iconset`);
-  mkdirSync(iconset, { recursive: true });
-  for (const size of [16, 32, 128, 256, 512]) {
-    rasterize(source, size, join(iconset, `icon_${size}x${size}.png`));
-    rasterize(
-      source,
-      size * 2,
-      join(iconset, `icon_${size}x${size}@2x.png`),
-    );
+  const chunkSpecs = Object.freeze([
+    ["ic04", 16],
+    ["ic05", 32],
+    ["ic11", 32],
+    ["ic12", 64],
+    ["ic07", 128],
+    ["ic08", 256],
+    ["ic13", 256],
+    ["ic09", 512],
+    ["ic14", 512],
+    ["ic10", 1024],
+  ]);
+  const images = new Map();
+  for (const size of new Set(chunkSpecs.map(([, value]) => value))) {
+    const filePath = join(temporaryRoot, `agencyai-${size}.png`);
+    rasterize(source, size, filePath);
+    images.set(size, readFileSync(filePath));
   }
-  run("iconutil", ["-c", "icns", iconset, "-o", output]);
+  const chunks = chunkSpecs.map(([type, size]) => {
+    const image = images.get(size);
+    const chunk = Buffer.allocUnsafe(8 + image.length);
+    chunk.write(type, 0, 4, "ascii");
+    chunk.writeUInt32BE(chunk.length, 4);
+    image.copy(chunk, 8);
+    return chunk;
+  });
+  const header = Buffer.allocUnsafe(8);
+  header.write("icns", 0, 4, "ascii");
+  header.writeUInt32BE(8 + chunks.reduce((total, chunk) => total + chunk.length, 0), 4);
+  writeFileSync(output, Buffer.concat([header, ...chunks]));
 }
 
 function createIco(source, output) {
@@ -60,6 +81,23 @@ function createIco(source, output) {
     source,
     "-define",
     "icon:auto-resize=256,128,64,48,32,24,16",
+    output,
+  ]);
+}
+
+function createDevelopmentIcon(source, output) {
+  run("magick", [
+    source,
+    "-resize",
+    "512x512",
+    "-fill",
+    "#f59e0b",
+    "-stroke",
+    "#07112f",
+    "-strokewidth",
+    "12",
+    "-draw",
+    "circle 420,92 420,30",
     output,
   ]);
 }
@@ -75,21 +113,21 @@ export function generateAgencyAiBrandAssets() {
     createIcns(productionMark, resolve(iconRoot, "icon.icns"), temporaryRoot);
 
     const devRoot = resolve(iconRoot, "dev");
-    rasterize(developmentMark, 512, resolve(devRoot, "icon.png"));
-    rasterize(developmentMark, 32, resolve(devRoot, "32x32.png"));
-    rasterize(developmentMark, 128, resolve(devRoot, "128x128.png"));
-    rasterize(developmentMark, 256, resolve(devRoot, "128x128@2x.png"));
+    const developmentIcon = resolve(devRoot, "icon.png");
+    createDevelopmentIcon(productionMark, developmentIcon);
+    rasterize(developmentIcon, 32, resolve(devRoot, "32x32.png"));
+    rasterize(developmentIcon, 128, resolve(devRoot, "128x128.png"));
+    rasterize(developmentIcon, 256, resolve(devRoot, "128x128@2x.png"));
     createIcns(
-      developmentMark,
+      developmentIcon,
       resolve(devRoot, "icon-dev.icns"),
       temporaryRoot,
     );
 
+    cpSync(productionMark, rendererMark);
     rasterize(productionMark, 16, resolve(rendererPublic, "favicon-16x16.png"));
     rasterize(productionMark, 32, resolve(rendererPublic, "favicon-32x32.png"));
     rasterize(productionMark, 180, resolve(rendererPublic, "apple-touch-icon.png"));
-
-    cpSync(productionMark, resolve(iconRoot, "agencyai-mark.svg"));
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

@@ -32,7 +32,7 @@ import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { useBootState } from "./boot-state";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { waitForOpenworkConnection } from "./openwork-connection";
 import {
   writeActiveWorkspaceId,
   writeLastSessionFor,
@@ -100,7 +100,7 @@ export function LocalWelcomeRoute() {
     setBusy(true);
     setError(null);
     try {
-      const connection = await resolveOpenworkConnection();
+      const connection = await waitForOpenworkConnection({ timeoutMs: 15_000 });
       if (!connection.normalizedBaseUrl || !connection.resolvedToken) {
         throw new Error("The local AgencyAI runtime is not ready yet.");
       }
@@ -140,7 +140,7 @@ export function LocalWelcomeRoute() {
           (entry) => entry.workspaceType !== "remote",
         ),
       }).catch(() => undefined);
-      const fresh = await resolveOpenworkConnection();
+      const fresh = await waitForOpenworkConnection({ timeoutMs: 15_000 });
       let sessionId: string | null = null;
       if (fresh.normalizedBaseUrl && fresh.resolvedToken) {
         const mounted =

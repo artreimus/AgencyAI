@@ -75,8 +75,9 @@ import {
   resolveLocalRendererRedirect,
   resolveLocalSettingsTab,
 } from "./local-renderer-policy";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { waitForOpenworkConnection } from "./openwork-connection";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
+import { mapDesktopWorkspace, mergeRouteWorkspaces } from "./route-workspaces";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 
 const PRODUCT = getCompiledRendererProductProfile();
@@ -385,26 +386,26 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
   const refreshRuntime = useCallback(async () => {
     setLoading(true);
     try {
-      const desktopList = await workspaceBootstrap();
-      const workspaces = projectLocalWorkspaces(desktopList.workspaces ?? []);
-      const selectedWorkspace =
-        workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ??
-        workspaces.find((workspace) => workspace.id === desktopList.activeId) ??
-        workspaces[0] ??
-        null;
-      const connection = await resolveOpenworkConnection();
-      if (
-        !selectedWorkspace ||
-        !connection.normalizedBaseUrl ||
-        !connection.resolvedToken
-      ) {
+      // Workspaces created through openwork-server are not guaranteed to be
+      // mirrored into Electron's legacy workspace store. The session route
+      // already merges both inventories; settings must do the same or it can
+      // claim that no workspace exists while the sidebar shows several.
+      const desktopList = await workspaceBootstrap().catch(() => null);
+      const desktopWorkspaces = projectLocalWorkspaces(
+        desktopList?.workspaces ?? [],
+      ).map(mapDesktopWorkspace);
+      const connection = await waitForOpenworkConnection({ timeoutMs: 15_000 });
+      if (!connection.normalizedBaseUrl || !connection.resolvedToken) {
+        const selectedWorkspace =
+          desktopWorkspaces.find((workspace) => workspace.id === requestedWorkspaceId) ??
+          desktopWorkspaces.find((workspace) => workspace.id === desktopList?.activeId) ??
+          desktopWorkspaces[0] ??
+          null;
         setRuntime({
           ...EMPTY_RUNTIME,
-          workspaces,
+          workspaces: desktopWorkspaces,
           selectedWorkspace,
-          error: selectedWorkspace
-            ? "The local AgencyAI runtime is not ready."
-            : "Create a local workspace first.",
+          error: "The local AgencyAI runtime is not ready.",
         });
         return;
       }
@@ -413,6 +414,31 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
         token: connection.resolvedToken,
         hostToken: connection.resolvedHostToken || undefined,
       });
+      const serverList = await serverClient.listWorkspaces();
+      const serverWorkspaces = projectLocalWorkspaces(
+        serverList.items ?? serverList.workspaces ?? [],
+      );
+      const workspaces = mergeRouteWorkspaces(
+        serverWorkspaces,
+        desktopWorkspaces,
+      );
+      const selectedWorkspace =
+        workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ??
+        workspaces.find((workspace) => workspace.id === serverList.activeId) ??
+        workspaces.find((workspace) => workspace.id === desktopList?.activeId) ??
+        workspaces[0] ??
+        null;
+      if (!selectedWorkspace) {
+        setRuntime({
+          ...EMPTY_RUNTIME,
+          workspaces,
+          serverClient,
+          baseUrl: connection.normalizedBaseUrl,
+          token: connection.resolvedToken,
+          error: "Create a local workspace first.",
+        });
+        return;
+      }
       const mounted =
         buildOpenworkWorkspaceBaseUrl(
           connection.normalizedBaseUrl,
@@ -448,6 +474,14 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
     void refreshRuntime();
   }, [refreshRuntime]);
 
+  useEffect(() => {
+    const handleRuntimeReady = () => void refreshRuntime();
+    window.addEventListener("openwork-server-settings-changed", handleRuntimeReady);
+    return () => {
+      window.removeEventListener("openwork-server-settings-changed", handleRuntimeReady);
+    };
+  }, [refreshRuntime]);
+
   const refreshProviders = useCallback(async () => {
     if (!runtime.opencodeClient) {
       setProviderData(null);
@@ -473,6 +507,7 @@ function LocalSettingsComposition(props: LocalSettingsSurfaceProps) {
       ),
     };
     setProviderData(filtered);
+    setProviderError(null);
     return filtered;
   }, [runtime.baseUrl, runtime.opencodeClient, runtime.selectedWorkspace?.path]);
 

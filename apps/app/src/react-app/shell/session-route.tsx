@@ -25,6 +25,7 @@ import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionA
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildOpenworkWorkspaceBaseUrl,
+  createOpenworkServerClient,
   readOpenworkServerSettings,
 } from "@/app/lib/openwork-server";
 import {
@@ -179,7 +180,7 @@ import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-s
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { waitForOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
@@ -560,6 +561,9 @@ export function SessionRoute() {
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviderIds, setDisabledProviderIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (client) setCreateWorkspaceError(null);
+  }, [client]);
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
   useEffect(() => {
@@ -963,7 +967,10 @@ export function SessionRoute() {
 
   const hasUsableModel = Boolean(local.prefs.defaultModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
-    opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
+    opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && hasUsableModel,
+  );
+  const modelSetupRequired = Boolean(
+    opencodeClient && selectedWorkspaceId && !loading && !hasUsableModel,
   );
 
   const openWorkModelsPromo = useOpenWorkModelsStartupPromo({
@@ -989,13 +996,16 @@ export function SessionRoute() {
   });
   const modelUnavailableMessage = organizationModelsEmpty
     ? t("models.organization_models_empty")
+    : modelSetupRequired && providerConnectedIds.length === 0
+      ? t("models.no_models_available")
     : selectedModelUnavailable
       ? t("models.model_unavailable_short")
+      : modelSetupRequired
+        ? t("models.no_models_available")
       : null;
   const showPreparingStatus =
     !organizationModelsEmpty &&
-    (effectiveLoading ||
-      (!canCreateTask && !routeError && !selectedWorkspaceError));
+    effectiveLoading;
 
   useEffect(() => {
     if (!opencodeClient) {
@@ -1142,7 +1152,7 @@ export function SessionRoute() {
       },
       providerCatalog,
       modelPickerOpen: modelPicker.compactOpen,
-      modelUnavailable: selectedModelUnavailable,
+      modelUnavailable: modelSetupRequired,
       modelUnavailableMessage,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       openWorkModelsEntitled: PRODUCT.features.openworkModels
@@ -1183,7 +1193,9 @@ export function SessionRoute() {
         const sessionModelSelection = getSessionModelSelection(targetSessionId);
         const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
         const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
-        if (!sessionModelSelection && selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
+        if (!sessionModelSelection && !hasUsableModel) {
+          throw new Error(modelUnavailableMessage ?? "Connect a model provider and choose a model before sending.");
+        }
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -1385,7 +1397,7 @@ export function SessionRoute() {
       client,
       workspaceId: selectedWorkspaceId || null,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
-      modelUnavailable: selectedModelUnavailable,
+      modelUnavailable: modelSetupRequired,
       modelUnavailableMessage,
       onRefreshOrganizationModels: PRODUCT.features.openworkCloud
         ? refreshOrganizationModelAccess
@@ -1973,7 +1985,7 @@ export function SessionRoute() {
   const buildCommandDiagnosticsBundle = useCallback(() => buildDiagnosticsBundleJson({
     anyActiveRuns: activeReloadBlockingSessions.length > 0,
     canReloadWorkspace: reloadCoordinator.canReloadWorkspaceEngine,
-    clientConnected: canCreateTask,
+    clientConnected: Boolean(opencodeClient),
     developerMode,
     hostInfo: openworkServerHostInfoState,
     openworkServerStatus: client ? "connected" : "disconnected",
@@ -1982,10 +1994,10 @@ export function SessionRoute() {
   }), [
     activeReloadBlockingSessions.length,
     baseUrl,
-    canCreateTask,
     client,
     developerMode,
     openworkServerHostInfoState,
+    opencodeClient,
     reloadCoordinator.canReloadWorkspaceEngine,
     selectedWorkspaceEndpoint?.workspaceId,
   ]);
@@ -2122,20 +2134,30 @@ export function SessionRoute() {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      let list: WorkspaceList | null = null;
-      let createdOnServer = false;
-      if (client) {
-        list = await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .then((serverList) => {
-            createdOnServer = true;
-            return serverList;
-          })
-          .catch(() => null);
+      const desktopRuntime = isDesktopRuntime();
+      let workspaceClient = desktopRuntime ? null : client;
+      if (desktopRuntime) {
+        // The route-level client may still reflect the renderer's first probe,
+        // which can run before Electron finishes starting the embedded server.
+        // Re-resolve at mutation time so a stale render cannot block creation.
+        const connection = await waitForOpenworkConnection({ timeoutMs: 15_000 });
+        if (connection.normalizedBaseUrl && connection.resolvedToken) {
+          workspaceClient = createOpenworkServerClient({
+            baseUrl: connection.normalizedBaseUrl,
+            token: connection.resolvedToken,
+            hostToken: connection.resolvedHostToken || undefined,
+          });
+        }
       }
-      if (!list) {
+      if (!workspaceClient) {
         throw new Error("AgencyAI local service is unavailable. Start or reconnect it before creating a workspace.");
       }
+      const list: WorkspaceList = await workspaceClient.createLocalWorkspace({
+        folderPath: folder,
+        name: workspaceName,
+        preset,
+      });
+      const createdOnServer = true;
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       let targetWorkspaceId = createdId;
       let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
@@ -2157,7 +2179,7 @@ export function SessionRoute() {
         }).catch(() => undefined);
         // The engine boot can restart the server with fresh tokens; re-resolve
         // so the first-session creation below doesn't use stale credentials.
-        const fresh = await resolveOpenworkConnection().catch(() => null);
+        const fresh = await waitForOpenworkConnection({ timeoutMs: 15_000 }).catch(() => null);
         if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
           sessionBaseUrl = fresh.normalizedBaseUrl;
           sessionToken = fresh.resolvedToken;
@@ -2353,13 +2375,13 @@ export function SessionRoute() {
       runtimeWorkspaceId={selectedWorkspaceEndpoint?.workspaceId || null}
       opencodeBaseUrl={opencodeBaseUrl}
       workspaces={workspaces}
-      clientConnected={canCreateTask}
+      clientConnected={Boolean(opencodeClient)}
       openworkServerStatus={client ? "connected" : "disconnected"}
       openworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
       environmentClient={client}
       openworkServerToken={selectedWorkspaceServerToken}
       developerMode={developerMode}
-      headerStatus={canCreateTask ? t("status.connected") : (modelUnavailableMessage ?? t("session.loading_detail"))}
+      headerStatus={effectiveLoading ? t("session.loading_detail") : (modelUnavailableMessage ?? t("status.connected"))}
       busyHint={organizationModelsEmpty ? t("models.organization_models_empty") : effectiveLoading ? t("session.loading_detail") : null}
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
       providerConnectedIds={providerConnectedIds}

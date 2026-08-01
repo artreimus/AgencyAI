@@ -30,6 +30,10 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.ts";
 const FLOW_ID = "agencyai-pr02-local-renderer";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASE_COMMIT = "d1ebb11381fd62a83b9d695393f640ec3ee589b9";
+const EXPECTED_BRANCH =
+  process.env.AGENCYAI_PR02_EXPECTED_BRANCH?.trim() || "codex/agencyai-pr02";
+const ALLOW_DIRTY_WORKTREE =
+  process.env.AGENCYAI_PR02_ALLOW_DIRTY_WORKTREE === "1";
 const MESSAGE = "Reply with exactly: local-renderer ok";
 const REPLY = "local-renderer ok";
 const PROVIDER_ID = "agencyai-local-renderer";
@@ -577,27 +581,89 @@ async function serverRequest(
   return payload;
 }
 
+async function approvedConfigPatch(
+  ctx: FlowContext,
+  workspaceId: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const result = await ctx.eval(`(async () => {
+    const desktop = window.__OPENWORK_ELECTRON__;
+    if (!desktop?.invokeDesktop) {
+      throw new Error("Electron desktop bridge is unavailable");
+    }
+    const info = await desktop.invokeDesktop("openworkServerInfo");
+    const baseUrl = typeof info?.baseUrl === "string"
+      ? info.baseUrl.replace(/\\/+$/, "")
+      : "";
+    const token =
+      (typeof info?.ownerToken === "string" && info.ownerToken.trim())
+      || (typeof info?.clientToken === "string" && info.clientToken.trim())
+      || "";
+    const hostToken =
+      typeof info?.hostToken === "string" ? info.hostToken.trim() : "";
+    if (!baseUrl || !token) {
+      throw new Error("Local OpenWork server is unavailable");
+    }
+
+    const grant = await desktop.invokeDesktop("desktopApprovalGrant", {
+      workspaceId: ${JSON.stringify(workspaceId)},
+      operation: "config.patch",
+    });
+    const response = await desktop.invokeDesktop(
+      "__fetch",
+      \`\${baseUrl}/workspace/${encodeURIComponent(workspaceId)}/config\`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: \`Bearer \${token}\`,
+          "content-type": "application/json",
+          ...(hostToken ? { "x-openwork-host-token": hostToken } : {}),
+        },
+        body: JSON.stringify(${JSON.stringify(body)}),
+        desktopApprovalCredential: grant.credential,
+        timeoutMs: 60_000,
+      },
+    );
+    let payload = null;
+    try {
+      payload = response.body ? JSON.parse(response.body) : null;
+    } catch {
+      payload = response.body;
+    }
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      statusText: response.statusText,
+      payload,
+    };
+  })()`, { awaitPromise: true });
+
+  if (field(result, "ok") !== true) {
+    throw new Error(
+      `Approved PATCH /workspace/${workspaceId}/config failed: ${stable(result)}`,
+    );
+  }
+  return field(result, "payload");
+}
+
 async function configureLocalProvider(ctx: FlowContext): Promise<void> {
   const baseURL = `http://127.0.0.1:${state.providerPort}/v1`;
-  await serverRequest(
+  await approvedConfigPatch(
     ctx,
-    `/workspace/${encodeURIComponent(state.workspaceId)}/config`,
+    state.workspaceId,
     {
-      method: "PATCH",
-      body: {
-        opencode: {
-          provider: {
-            [PROVIDER_ID]: {
-              npm: "@ai-sdk/openai-compatible",
-              name: PROVIDER_NAME,
-              options: {
-                baseURL,
-                apiKey: "sk-agencyai-pr02",
-              },
-              models: {
-                [MODEL_ID]: {
-                  name: PROVIDER_NAME,
-                },
+      opencode: {
+        provider: {
+          [PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: PROVIDER_NAME,
+            options: {
+              baseURL,
+              apiKey: "sk-agencyai-pr02",
+            },
+            models: {
+              [MODEL_ID]: {
+                name: PROVIDER_NAME,
               },
             },
           },
@@ -637,6 +703,17 @@ async function configureLocalProvider(ctx: FlowContext): Promise<void> {
     window.dispatchEvent(new Event("openwork.defaultModelChanged"));
     return true;
   })()`);
+
+  // This fixture patches the runtime config through the protected server relay
+  // instead of the Settings form. The real Settings path invalidates the
+  // provider-list query after reloading OpenCode; reload the isolated renderer
+  // here so the fixture observes the same fresh provider snapshot.
+  await ctx.eval("(() => { location.reload(); return true; })()");
+  await ctx.waitFor(
+    `location.hash.includes(${JSON.stringify(`/workspace/${state.workspaceId}/session`)})
+      && Boolean(window.__openworkControl)`,
+    { timeoutMs: 60_000, label: "AgencyAI PR02 provider refresh" },
+  );
 }
 
 async function ensureLocalModelSelected(ctx: FlowContext): Promise<void> {
@@ -1300,10 +1377,14 @@ export default defineFlow({
               witness(ctx, stable(rawStorage).includes(CLOUD_NOTIFICATION_TITLE), "The quarantined raw notification remains reversible", rawStorage);
               witness(ctx, rawWorkspace.includes(REMOTE_ICON_PATH), "The remote-workspace icon URL remains reversible", rawWorkspace);
               witness(ctx, rawBootstrap.includes(REMOTE_ICON_PATH), "The remote-brand icon URL remains reversible", rawBootstrap);
-              witness(ctx, currentBranch.status === 0 && currentBranch.stdout.trim() === "codex/agencyai-pr02", "The proof runs from the PR02 branch", commandOutput(currentBranch));
+              witness(ctx, currentBranch.status === 0 && currentBranch.stdout.trim() === EXPECTED_BRANCH, `The proof runs from the expected branch: ${EXPECTED_BRANCH}`, commandOutput(currentBranch));
               witness(ctx, currentHead.status === 0 && /^[a-f0-9]{40}$/.test(currentHead.stdout.trim()), "The proof runs from an exact commit", commandOutput(currentHead));
               witness(ctx, currentHead.stdout.trim() !== BASE_COMMIT, "The PR02 proof commit is after the PR01 base", currentHead.stdout.trim());
-              witness(ctx, currentStatus.status === 0 && currentStatus.stdout.trim() === "", "The exact-head PR02 worktree is clean", commandOutput(currentStatus));
+              if (ALLOW_DIRTY_WORKTREE) {
+                witness(ctx, currentStatus.status === 0, "The in-progress worktree status was captured without claiming clean release provenance", commandOutput(currentStatus));
+              } else {
+                witness(ctx, currentStatus.status === 0 && currentStatus.stdout.trim() === "", "The exact-head PR02 worktree is clean", commandOutput(currentStatus));
+              }
               await ctx.expectNoText("Cloud account");
               await ctx.expectNoText("OpenWork Models");
               await ctx.expectNoText("Connect");
@@ -1341,9 +1422,11 @@ export default defineFlow({
                 },
                 exactHead: {
                   branch: currentBranch.stdout.trim(),
+                  expectedBranch: EXPECTED_BRANCH,
                   head: currentHead.stdout.trim(),
                   base: BASE_COMMIT,
                   clean: currentStatus.stdout.trim() === "",
+                  dirtyWorktreeAllowed: ALLOW_DIRTY_WORKTREE,
                 },
               }, null, 2));
             },

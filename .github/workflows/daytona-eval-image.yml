@@ -1,18 +1,13 @@
 name: Daytona Eval Image
 
 on:
-  push:
-    branches:
-      - dev
-    paths:
-      - .devcontainer/Dockerfile.daytona-vnc
-      - .devcontainer/start-daytona-vnc.sh
-      - .devcontainer/start-daytona-electron.sh
-      - .devcontainer/start-daytona-recording.sh
-      - .github/workflows/daytona-eval-image.yml
-      - pnpm-lock.yaml
-      - package.json
   workflow_dispatch:
+    inputs:
+      enable_legacy_daytona_publish:
+        description: Allow the inherited upstream Daytona image publisher
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,7 +23,10 @@ env:
 jobs:
   build-and-push:
     name: Build and Push Daytona Eval Image
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      inputs.enable_legacy_daytona_publish == true
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6

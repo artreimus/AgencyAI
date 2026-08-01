@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import {
   buildOpenworkRuntimeConfigObjectFromSnapshot,
 } from "./openwork-runtime-config.js";
-import { agencyAiLocalCapabilitiesPrompt } from "./opencode-plugins/agencyai-local-capabilities.js";
+import { AgencyAiLocalCapabilities } from "./opencode-plugins/agencyai-local-capabilities.js";
 
 const FORBIDDEN_LOCAL_STEERING = [
   "OpenWork Cloud",
@@ -34,7 +34,7 @@ function strings(value: unknown): string[] {
 }
 
 describe("local-mvp generated OpenCode config", () => {
-  test("uses AgencyAI guidance and a local-only built-in plugin composition", () => {
+  test("uses AgencyAI guidance and a local-only built-in plugin composition", async () => {
     const generated = buildOpenworkRuntimeConfigObjectFromSnapshot({
       default_agent: "openwork",
       disabled_providers: ["unused-provider"],
@@ -121,7 +121,10 @@ describe("local-mvp generated OpenCode config", () => {
       "openwork-cloud-dev": { type: "local", command: ["near-match"] },
     });
 
-    const localGuidance = `${prompt}\n${agencyAiLocalCapabilitiesPrompt()}`;
+    const capabilities = await AgencyAiLocalCapabilities();
+    const transformed = { system: [] as string[] };
+    await capabilities["experimental.chat.system.transform"]({}, transformed);
+    const localGuidance = `${prompt}\n${transformed.system.join("\n")}`;
     for (const forbidden of FORBIDDEN_LOCAL_STEERING) {
       expect(localGuidance.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }

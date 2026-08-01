@@ -49,12 +49,48 @@ function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo
   return typeof info === "object" && info !== null;
 }
 
-function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
+function isOpenworkServerReady(
+  info: BootOpenworkServerInfo | null | undefined,
+): info is BootOpenworkServerInfo {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
       (info.ownerToken?.trim() || info.clientToken?.trim()),
   );
+}
+
+type PublishDesktopRuntimeConnectionOptions = {
+  openworkCloud: boolean;
+  persistSettings: (settings: Parameters<typeof writeOpenworkServerSettings>[0]) => void;
+  notify: () => void;
+};
+
+/**
+ * Publish desktop runtime readiness to renderer routes. Local builds must not
+ * persist ephemeral loopback credentials, but they still need the notification
+ * so a route that probed during cold start can reconnect immediately.
+ */
+export function publishDesktopRuntimeConnection(
+  serverInfo: BootOpenworkServerInfo | null | undefined,
+  options: PublishDesktopRuntimeConnectionOptions,
+): boolean {
+  if (!isOpenworkServerReady(serverInfo)) return false;
+
+  if (options.openworkCloud) {
+    options.persistSettings({
+      urlOverride: serverInfo.baseUrl ?? undefined,
+      token:
+        serverInfo.ownerToken?.trim() ||
+        serverInfo.clientToken?.trim() ||
+        undefined,
+      hostToken: serverInfo.hostToken?.trim() || undefined,
+      portOverride: serverInfo.port ?? undefined,
+      remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+    });
+  }
+
+  options.notify();
+  return true;
 }
 
 /**
@@ -103,25 +139,18 @@ export function useDesktopRuntimeBoot() {
           PRODUCT.features.remoteAccess &&
           readOpenworkServerSettings().remoteAccessEnabled === true;
 
-        const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
-          if (!PRODUCT.features.openworkCloud) return;
-          if (!serverInfo?.baseUrl) return;
-          writeOpenworkServerSettings({
-            urlOverride: serverInfo.baseUrl,
-            token:
-              serverInfo.ownerToken?.trim() ||
-              serverInfo.clientToken?.trim() ||
-              undefined,
-            hostToken: serverInfo.hostToken?.trim() || undefined,
-            portOverride: serverInfo.port ?? undefined,
-            remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+        const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) =>
+          publishDesktopRuntimeConnection(serverInfo, {
+            openworkCloud: PRODUCT.features.openworkCloud,
+            persistSettings: writeOpenworkServerSettings,
+            notify: () => {
+              try {
+                window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+              } catch {
+                /* ignore */
+              }
+            },
           });
-          try {
-            window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
-          } catch {
-            /* ignore */
-          }
-        };
 
         const startServerWithoutDesktopWorkspace = async () => {
           setPhase("starting-engine", `Starting ${PRODUCT.brand.name}`);
