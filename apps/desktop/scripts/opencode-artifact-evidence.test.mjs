@@ -27,7 +27,7 @@ const WORKFLOW_PATH = ".github/workflows/agencyai-runtime.yml";
 const WORKFLOW_RUN_ID = 30393234285;
 const ARTIFACT_ID = 8701822665;
 const ARTIFACT_NAME = "agencyai-opencode-1.17.11-darwin-arm64";
-const FORK_TAG = "product-opencode-v1.17.11-p3";
+const FORK_TAG = "product-opencode-v1.17.11-p4";
 const EXPIRES_AT = "2030-10-26T12:43:49Z";
 const UPSTREAM_COMMIT = "0".repeat(40);
 const PATCH_COMMITS = ["1".repeat(40), "2".repeat(40), "3".repeat(40)];
@@ -439,6 +439,7 @@ describe("OpenCode workflow artifact evidence", () => {
       ["archive hash", (value) => { value.provenance.build.archive.sha256 = "e".repeat(64); }, /archive hash/i],
       ["binary hash", (value) => { value.provenance.build.binary.sha256 = "e".repeat(64); }, /binary hash/i],
       ["environment", (value) => { value.provenance.build.environment.OPENCODE_DISABLE_SHARE = "0"; }, /environment OPENCODE_DISABLE_SHARE/i],
+      ["OpenAI OAuth environment", (value) => { value.provenance.build.environment.OPENCODE_ENABLE_OPENAI_OAUTH = "0"; }, /environment OPENCODE_ENABLE_OPENAI_OAUTH/i],
       ["lock hash", (value) => { value.provenance.dependencies.lockSha256 = "e".repeat(64); }, /lock material hash/i],
       ["models.dev source", (value) => { value.provenance.dependencies.modelsDev.source = "https://example.invalid/models"; }, /models\.dev source/i],
       ["models.dev commit", (value) => { value.provenance.dependencies.modelsDev.commit = "invalid"; }, /models\.dev commit/i],

@@ -53,6 +53,10 @@ const REQUIRED_LOCAL_RENDERER_ENDPOINTS: readonly RendererEndpoint[] = [
   { method: "DELETE", path: "/auth/anthropic", family: "provider", minimumScope: "collaborator", source: "provider disconnect" },
   { method: "POST", path: "/provider/anthropic/oauth/authorize", family: "provider", minimumScope: "collaborator", source: "provider OAuth start" },
   { method: "POST", path: "/provider/anthropic/oauth/callback", family: "provider", minimumScope: "collaborator", source: "provider OAuth completion" },
+  { method: "PUT", path: "/auth/openai", family: "provider", minimumScope: "collaborator", source: "OpenAI API-key connect" },
+  { method: "DELETE", path: "/auth/openai", family: "provider", minimumScope: "collaborator", source: "OpenAI disconnect" },
+  { method: "POST", path: "/provider/openai/oauth/authorize", family: "provider", minimumScope: "collaborator", source: "ChatGPT subscription OAuth start" },
+  { method: "POST", path: "/provider/openai/oauth/callback", family: "provider", minimumScope: "collaborator", source: "ChatGPT subscription OAuth completion" },
   { method: "POST", path: "/instance/dispose", family: "engine-instance", minimumScope: "collaborator", source: "provider credential reload" },
 
   { method: "POST", path: "/mcp/github/connect", family: "mcp", minimumScope: "collaborator", source: "ordinary MCP silent reauthentication" },

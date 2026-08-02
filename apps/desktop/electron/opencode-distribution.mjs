@@ -385,7 +385,7 @@ export function validateOpencodeDistribution(value) {
     forkCommit,
     forkTag: (() => {
       const forkTag = requiredString(value.forkTag, "forkTag");
-      if (forkTag !== `product-opencode-v${binaryVersion}-p3`) {
+      if (forkTag !== `product-opencode-v${binaryVersion}-p4`) {
         throw new Error(
           "forkTag must select the immutable reviewed AgencyAI patchset",
         );

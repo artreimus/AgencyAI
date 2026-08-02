@@ -283,7 +283,7 @@ describe("desktop approval runtime plumbing", () => {
     assert.match(launch.opencodeDistribution.binarySha256, /^[a-f0-9]{64}$/);
     assert.equal(
       launch.opencodeDistribution.forkTag,
-      "product-opencode-v1.17.11-p3",
+      "product-opencode-v1.17.11-p4",
     );
     assert.equal(
       launch.opencodeDistribution.upstreamCommit,

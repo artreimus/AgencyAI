@@ -38,6 +38,8 @@ Common misses:
 | `objects.githubusercontent.com` | Required in practice for legacy/rollback | Legacy GitHub release-asset redirect target. | Older clients or rollback downloads can fail partway through. |
 | `registry.npmjs.org` | Required in practice unless npm is mirrored | `npx` package resolution for `openwork-ui-mcp` and development-only helper commands. | OpenWork UI-control MCP is unavailable. |
 | `models.openworklabs.com` | Required in practice unless mirrored | Default OpenCode model catalog passed as `OPENCODE_MODELS_URL`. | Model selection can be stale, incomplete, or unavailable. |
+| `auth.openai.com` | Opt-in | ChatGPT Pro/Plus browser authorization and token refresh performed by the local OpenCode subprocess. | Users cannot connect or refresh subscription-backed OpenAI access. |
+| `chatgpt.com` | Opt-in | Authenticated Codex response requests after ChatGPT Pro/Plus sign-in. | Subscription-backed OpenAI models cannot answer tasks. |
 | `cdn.simpleicons.org` | Optional | Provider icons when no local icon exists. | Some icons are missing. |
 | `www.google.com` | Optional | Favicon image service and embedded browser new-tab page. | Favicons or the browser panel new tab may not load. |
 | `us.i.posthog.com` | Optional | Product analytics when analytics are enabled. | Analytics are dropped silently. |
@@ -74,6 +76,7 @@ These hosts are only needed when the corresponding feature, provider, connection
 
 | Feature group | Hostnames | What breaks when blocked |
 | --- | --- | --- |
+| OpenAI ChatGPT subscription | `auth.openai.com`, `chatgpt.com` | Browser sign-in, token refresh, or subscription-backed Codex requests fail. |
 | OpenAI direct features | `api.openai.com` | Direct OpenAI Realtime voice and image-generation features fail for users who configured OpenAI. |
 | Google Workspace | `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`, `chat.googleapis.com`, `mail.google.com` | OAuth, profile, Calendar, Drive, Gmail, Chat, and generated Gmail links fail as applicable. |
 | Built-in MCP presets | `mcp.notion.com`, `mcp.linear.app`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.context7.com`, `mcp.slack.com` | That specific MCP preset cannot connect. |

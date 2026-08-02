@@ -37,10 +37,10 @@ const PATCH_COMMITS = Object.freeze([
   "b4f05fef52047d30f5c4656dcd8480e2c4e72de7",
   "d7a2e5ed280a976d4b16e96c33e6b4780af6a34b",
   "b424e670490d6241dca6f7fbcb3d6608af69aa41",
-  "1f29421c5386d77e1655f6adbf4585cedce03bc1",
+  "32018b8929b2ea5d2c8d80a3e5f90aabcf5a46d2",
 ]);
 const FORK_COMMIT = PATCH_COMMITS.at(-1);
-const FORK_TAG = "product-opencode-v1.17.11-p3";
+const FORK_TAG = "product-opencode-v1.17.11-p4";
 const WORKFLOW_RUN_ID = 30393234285;
 const ARTIFACT_NAME = "agencyai-opencode-1.17.11-darwin-arm64";
 const RENDERER_ORIGIN = "agencyai-internal://renderer";

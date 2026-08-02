@@ -1,6 +1,6 @@
 export const AGENCYAI_OPENCODE_BINARY_VERSION = "1.17.11"
 export const AGENCYAI_OPENCODE_FORK_TAG =
-  `product-opencode-v${AGENCYAI_OPENCODE_BINARY_VERSION}-p3`
+  `product-opencode-v${AGENCYAI_OPENCODE_BINARY_VERSION}-p4`
 
 export const AGENCYAI_LOCAL_OPENCODE_PLUGIN_NAMES = Object.freeze([
   "agencyai-local-extensions",
