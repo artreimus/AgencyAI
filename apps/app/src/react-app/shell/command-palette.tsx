@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { BrainCircuit, Check, ChevronLeftIcon, FileText, FolderInput, Globe, Zap } from "lucide-react";
+import { agentDisplayName } from "@/react-app/kernel/agent-display-name";
 
 export type PaletteItem = {
   id: string;
@@ -201,7 +202,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           title: t("session.cmd_agents_title"),
           detail: t("session.cmd_agents_detail"),
           meta: props.selectedAgent
-            ? props.selectedAgent.charAt(0).toUpperCase() + props.selectedAgent.slice(1)
+            ? agentDisplayName(props.selectedAgent)
             : t("session.default_agent"),
           searchText: "agent agents switch pick select default build plan",
           action: () => {
@@ -380,7 +381,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
       ...agents.map((agent) => ({
         id: `agent:${agent.name}`,
-        title: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        title: agentDisplayName(agent.name),
         detail: agent.description,
         meta: props.selectedAgent === agent.name ? t("session.cmd_agent_active") : undefined,
         icon: props.selectedAgent === agent.name

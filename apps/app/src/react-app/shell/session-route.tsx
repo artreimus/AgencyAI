@@ -91,6 +91,7 @@ import {
 } from "@/react-app/shell/route-workspaces";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { agentDisplayName } from "@/react-app/kernel/agent-display-name";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
 import type { NewTaskComposerContext } from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
@@ -1279,7 +1280,7 @@ export function SessionRoute() {
       onModelVariantChange: (value: string | null) => {
         local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
       },
-      agentLabel: selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : t("session.default_agent"),
+      agentLabel: selectedAgent ? agentDisplayName(selectedAgent) : t("session.default_agent"),
       selectedAgent,
       listAgents,
       onSelectAgent: (agent: string | null) => setSelectedAgent(agent),
@@ -1428,7 +1429,7 @@ export function SessionRoute() {
       onModelVariantChange: (value: string | null) => {
         local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
       },
-      agentLabel: selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : t("session.default_agent"),
+      agentLabel: selectedAgent ? agentDisplayName(selectedAgent) : t("session.default_agent"),
       selectedAgent,
       listAgents,
       onSelectAgent: (agent: string | null) => setSelectedAgent(agent),
