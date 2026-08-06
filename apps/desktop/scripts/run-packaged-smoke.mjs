@@ -23,6 +23,9 @@ import {
   loadPackagedRuntimeIntegritySync,
 } from "../electron/opencode-distribution.mjs";
 import {
+  MEMORY_SYSTEM_TEMPLATE_FILES,
+} from "../electron/memory-system.mjs";
+import {
   AGENCYAI_DOC_FILES,
   validateAgencyAiDocs,
 } from "./stage-agencyai-docs.mjs";
@@ -1194,6 +1197,42 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
       { awaitPromise: true },
     );
     const networkAudit = await readNetworkAudit(networkAuditPath);
+    const memoryConfigDir = path.join(
+      expectedStorageRoot,
+      "config",
+      "opencode",
+    );
+    const memoryFiles = [];
+    for (const relativePath of MEMORY_SYSTEM_TEMPLATE_FILES) {
+      const content = await readFile(
+        path.join(memoryConfigDir, relativePath),
+        "utf8",
+      );
+      assert(
+        content.trim().length > 0,
+        `Packaged memory template is empty: ${relativePath}`,
+      );
+      memoryFiles.push(relativePath);
+    }
+    const opencodeConfig = JSON.parse(await readFile(
+      path.join(memoryConfigDir, "opencode.jsonc"),
+      "utf8",
+    ));
+    const expectedMemoryInstruction = path.join(memoryConfigDir, "MEMORY.md");
+    const canonicalMemoryInstruction = await realpath(expectedMemoryInstruction);
+    let memoryInstruction = null;
+    for (const instruction of opencodeConfig.instructions ?? []) {
+      if (typeof instruction !== "string") continue;
+      const canonicalInstruction = await realpath(instruction).catch(() => null);
+      if (canonicalInstruction === canonicalMemoryInstruction) {
+        memoryInstruction = instruction;
+        break;
+      }
+    }
+    assert(
+      memoryInstruction !== null,
+      "Packaged first launch did not activate its runtime-derived MEMORY.md path",
+    );
 
     return {
       ok: true,
@@ -1239,6 +1278,10 @@ async function runPackagedSmoke({ appPath: requestedAppPath = null } = {}) {
           endpoints: sample.endpoints.length,
         })),
         unexpectedNonLoopback: 0,
+      },
+      memorySystem: {
+        files: memoryFiles,
+        instruction: memoryInstruction,
       },
       packagedPlugins: EXPECTED_PLUGIN_NAMES,
       serverWorkspaceRemoved,

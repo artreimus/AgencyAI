@@ -22,6 +22,7 @@ import { getBuildProductProfile } from "@openwork/product-config";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { ensureAgencyAiMemorySystem } from "./memory-system.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import {
   loadOpencodeDistributionSync,
@@ -825,6 +826,30 @@ const storageLayout = resolveElectronStorageLayout({
   platform: process.platform,
 });
 await ensureStorageLayout(storageLayout);
+if (PRODUCT_PROFILE.profile === "local-mvp") {
+  const memoryTemplateRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "agencyai-memory-system")
+    : path.resolve(__dirname, "../resources/memory-system");
+  try {
+    const memorySystem = await ensureAgencyAiMemorySystem({
+      opencodeConfigDir: storageLayout.opencodeConfig,
+      templateRoot: memoryTemplateRoot,
+    });
+    if (memorySystem.config.error) {
+      console.warn("[memory-system] templates installed but MEMORY.md is not active", memorySystem.config.error);
+    } else if (memorySystem.createdFiles.length || memorySystem.config.status !== "unchanged") {
+      console.info("[memory-system] app-owned memory configuration ready", {
+        createdFiles: memorySystem.createdFiles,
+        configPath: memorySystem.config.path,
+        configStatus: memorySystem.config.status,
+      });
+    }
+  } catch (error) {
+    // Memory bootstrap must not prevent the local desktop from starting. The
+    // packaged-resource and filesystem behavior is covered by focused tests.
+    console.warn("[memory-system] failed to initialize", error);
+  }
+}
 applyStorageLayoutEnvironment(process.env, storageLayout);
 const networkAudit = createNetworkAuditFromEnvironment({
   env: process.env,

@@ -148,6 +148,24 @@ test("local-mvp packages only curated AgencyAI docs and the two project licenses
   ]);
 });
 
+test("local-mvp packages the portable AgencyAI memory-system templates", async () => {
+  const profile = await configModule.loadSelectedProductProfile();
+  const config = configModule.createElectronBuilderConfig(profile);
+  const memoryResource = config.extraResources.find(
+    (entry) => entry.to === "agencyai-memory-system",
+  );
+
+  assert.deepEqual(memoryResource, {
+    from: "resources/memory-system",
+    to: "agencyai-memory-system",
+    filter: [...configModule.AGENCYAI_MEMORY_SYSTEM_FILES],
+  });
+  assert.equal(
+    configModule.AGENCYAI_MEMORY_SYSTEM_FILES.some((entry) => entry.includes("artreimus")),
+    false,
+  );
+});
+
 test("platform identity, helper IDs, NSIS identity, and Linux desktop filename are stable", async () => {
   const profile = await configModule.loadSelectedProductProfile();
   const config = configModule.createElectronBuilderConfig(profile);
