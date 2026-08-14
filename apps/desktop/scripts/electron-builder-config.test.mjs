@@ -559,7 +559,9 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
   }
 });
 
-test("afterPack reverses electron-builder's updater-only arbitrary-load override", async () => {
+test("afterPack reverses electron-builder's updater-only arbitrary-load override", {
+  skip: process.platform !== "darwin",
+}, async () => {
   const appOutDir = await mkdtemp(resolve(tmpdir(), "agencyai-after-pack-ats-"));
   const infoPlistPath = resolve(
     appOutDir,
