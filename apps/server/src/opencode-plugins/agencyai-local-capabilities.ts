@@ -48,10 +48,6 @@ const docs = createBundledDocsIndex({
   missingPageLabel: "AgencyAI docs page",
 });
 
-export function agencyAiLocalCapabilitiesPrompt(): string {
-  return AGENCYAI_LOCAL_CAPABILITIES;
-}
-
 export const AgencyAiLocalCapabilities = async () => ({
   "experimental.chat.system.transform": async (
     _input: unknown,

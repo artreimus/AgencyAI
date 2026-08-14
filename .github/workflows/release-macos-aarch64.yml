@@ -2,8 +2,8 @@ name: Legacy Release App (upstream compatibility only)
 
 # This inherited workflow is retained for upstream comparison, not as the
 # AgencyAI release lane. It has no tag trigger and is fail-closed:
-# only different-ai/openwork can opt in to a manual run. PR07 will introduce
-# a separate AgencyAI release lane after the local desktop MVP is validated.
+# only different-ai/openwork can opt in to a manual run. AgencyAI releases use
+# the separate fail-closed release-desktop-local.yml workflow.
 
 on:
   workflow_dispatch:
@@ -298,12 +298,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-15
             os_type: macos
             artifact: electron-macos-arm64
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
-          - platform: macos-14
+          - platform: macos-15
             os_type: macos
             artifact: electron-macos-x64
             electron_args: "--mac --x64"
@@ -568,7 +568,7 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       needs.publish-electron.result == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Record manual-upgrade compatibility mode
         run: echo "AgencyAI local-mvp does not publish updater manifests or blockmaps."
@@ -588,7 +588,7 @@ jobs:
     name: Build + Upload openwork-orchestrator Sidecars
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.publish_sidecars == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
@@ -700,7 +700,7 @@ jobs:
       needs.verify-release.result == 'success' &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       needs.resolve-release.outputs.publish_npm == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
@@ -805,7 +805,7 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.publish-electron.result == 'success' &&
       (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -869,7 +869,7 @@ jobs:
       needs.publish-installers.result == 'success' &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}

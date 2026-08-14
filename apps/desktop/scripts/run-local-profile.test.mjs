@@ -125,7 +125,7 @@ test("the test action contains the complete fast verification matrix", () => {
   assert.deepEqual(
     resolved.commands.slice(2).map(({ command, args }) => [command, ...args].join(" ")),
     [
-      "/node --test /repo/scripts/check-source-closure.test.mjs /repo/scripts/check-local-profile.test.mjs /repo/scripts/release/local-release-policy.test.mjs",
+      "/node --test /repo/scripts/check-source-closure.test.mjs /repo/scripts/check-local-profile.test.mjs /repo/scripts/release/local-release-policy.test.mjs /repo/scripts/release/stage-macos-release-assets.test.mjs",
       "pnpm --filter @openwork/product-config typecheck",
       "pnpm --filter @openwork/product-config test",
       "pnpm --filter @openwork/app typecheck",

@@ -43,7 +43,10 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useBootState } from "./boot-state";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { projectLocalWorkspaces } from "./local-renderer-policy";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import {
+  resolveOpenworkConnection,
+  waitForOpenworkConnection,
+} from "./openwork-connection";
 import {
   classifyRouteSessionReadError,
   describeRouteError,
@@ -177,6 +180,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const pendingCreatedSessionIdsRef = useRef<Record<string, Record<string, number>>>({});
   const hydratedRouteSessionIdsRef = useRef<Record<string, string>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
+  const startupConnectionResolvedRef = useRef(false);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
   const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
   const reconnectAttemptedWorkspaceIdRef = useRef("");
@@ -408,8 +412,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
       }
 
+      const connectionPromise =
+        isDesktopRuntime() &&
+        !PRODUCT.features.openworkCloud &&
+        !startupConnectionResolvedRef.current
+          ? waitForOpenworkConnection({ timeoutMs: 12_000 })
+          : resolveOpenworkConnection();
       const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await withRouteRefreshTimeout(
-        resolveOpenworkConnection(),
+        connectionPromise,
         "AgencyAI local service connection",
       );
       onHostInfo(hostInfo);
@@ -429,6 +439,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
         return;
       }
+      startupConnectionResolvedRef.current = true;
 
       // Update the local-server resolver synchronously, BEFORE we kick off any
       // workspace-scoped requests below. `endpointForWorkspace` reads from
@@ -673,10 +684,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     const handleSettingsChange = () => {
       onServerSettingsChanged();
-      // Self-heal: if the previous refresh got stuck mid-flight (e.g. macOS
-      // backgrounded the webview and never let a fetch resolve), clear the
-      // guard so a re-entry after resume actually goes through.
-      refreshInFlightRef.current = false;
+      // The initial local refresh now polls while Electron starts the server,
+      // so a readiness event does not need to start an overlapping refresh.
+      if (refreshInFlightRef.current) return;
       void refreshRouteState();
     };
     window.addEventListener("openwork-server-settings-changed", handleSettingsChange);

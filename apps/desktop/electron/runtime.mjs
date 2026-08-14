@@ -719,6 +719,7 @@ const LOCAL_MVP_FORCED_OPENCODE_ENV = Object.freeze({
   OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
   OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
   OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
+  OPENCODE_ENABLE_OPENAI_OAUTH: "true",
   OPENCODE_DISABLE_REMOTE_CONFIG: "true",
   OPENCODE_DISABLE_REMOTE_INSTRUCTIONS: "true",
   OPENCODE_DISABLE_REMOTE_SKILLS: "true",
@@ -2179,11 +2180,16 @@ export function createRuntimeManager({
     if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
       throw new Error("webContentsId must be a positive safe integer");
     }
+    const workspace = Array.isArray(handle.config?.workspaces)
+      ? handle.config.workspaces.find((entry) => entry?.id === workspaceId)
+      : null;
     if (
-      Array.isArray(handle.config?.workspaces) &&
-      !handle.config.workspaces.some((workspace) => workspace?.id === workspaceId)
+      !workspace ||
+      workspace.workspaceType !== "local" ||
+      typeof workspace.path !== "string" ||
+      !workspace.path.trim()
     ) {
-      throw new Error(`Workspace ${workspaceId} is not registered with the embedded server`);
+      throw new Error(`Workspace ${workspaceId} is not an active local workspace`);
     }
 
     const bearerToken =
@@ -2251,7 +2257,12 @@ export function createRuntimeManager({
         runtimeAllowRemoteAccess,
       ),
       manageOpencode: shouldManageOpencode,
-      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
+      // local-mvp must always re-resolve the verified bundled runtime. Feeding
+      // its previously resolved path back through this option makes the strict
+      // custom-binary guard reject our own managed OpenCode during a restart.
+      opencodeBinPath: localMvpRuntime
+        ? null
+        : engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
   }
 

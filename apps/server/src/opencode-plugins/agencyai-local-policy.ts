@@ -11,7 +11,7 @@ type MutableOpenCodeConfig = {
   skills?: unknown;
 };
 
-export function enforceAgencyAiLocalMcpPolicy(config: MutableOpenCodeConfig): void {
+function enforceAgencyAiLocalMcpPolicy(config: MutableOpenCodeConfig): void {
   enforceAgencyAiLocalRuntimePolicy(config);
 }
 

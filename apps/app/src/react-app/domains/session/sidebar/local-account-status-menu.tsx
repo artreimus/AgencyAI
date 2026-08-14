@@ -17,7 +17,12 @@ import type { AccountStatusMenuProps } from "./account-status-types";
 
 const PRODUCT = getCompiledRendererProductProfile();
 
-function localRuntimeStatus(props: AccountStatusMenuProps) {
+export function resolveLocalRuntimeStatus(
+  props: Pick<
+    AccountStatusMenuProps,
+    "clientConnected" | "loading" | "reloadBusy" | "reloadError" | "providerConnectedIds"
+  >,
+) {
   if (props.reloadBusy) {
     return { state: "loading", label: "Reloading local runtime" };
   }
@@ -28,6 +33,9 @@ function localRuntimeStatus(props: AccountStatusMenuProps) {
     return { state: "loading", label: "Preparing local workspace" };
   }
   if (props.clientConnected) {
+    if (props.providerConnectedIds.length === 0) {
+      return { state: "connected", label: "Workspace ready — connect a provider" };
+    }
     return { state: "connected", label: "Ready for local tasks" };
   }
   return { state: "disconnected", label: "Local runtime disconnected" };
@@ -35,7 +43,7 @@ function localRuntimeStatus(props: AccountStatusMenuProps) {
 
 export function LocalAccountStatusMenu(props: AccountStatusMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const runtime = localRuntimeStatus(props);
+  const runtime = resolveLocalRuntimeStatus(props);
   const openSettings = props.onOpenAccountSettings;
   const settingsAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.settings.open",
@@ -62,7 +70,7 @@ export function LocalAccountStatusMenu(props: AccountStatusMenuProps) {
             title={runtime.label}
           >
             <img
-              src="/agencyai-mark.svg"
+              src="/agencyai-mark.png"
               alt=""
               className="size-6 shrink-0 rounded-lg"
             />

@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  AgencyAiLocalCapabilities,
-  agencyAiLocalCapabilitiesPrompt,
-} from "./agencyai-local-capabilities.js";
+import { AgencyAiLocalCapabilities } from "./agencyai-local-capabilities.js";
 
 const FORBIDDEN_LOCAL_STEERING = [
   "OpenWork Cloud",
@@ -24,7 +21,11 @@ const FORBIDDEN_LOCAL_STEERING = [
 
 describe("AgencyAI local capabilities plugin", () => {
   test("injects local guidance with no hosted-product steering", async () => {
-    const prompt = agencyAiLocalCapabilitiesPrompt();
+    const plugin = await AgencyAiLocalCapabilities();
+    const output = { system: [] as string[] };
+    await plugin["experimental.chat.system.transform"]({}, output);
+    const [prompt] = output.system;
+
     expect(prompt).toContain("AgencyAI");
     expect(prompt).toContain("local workspace");
     expect(prompt).toContain("MCP servers");
@@ -35,10 +36,6 @@ describe("AgencyAI local capabilities plugin", () => {
     for (const forbidden of FORBIDDEN_LOCAL_STEERING) {
       expect(prompt.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
-
-    const plugin = await AgencyAiLocalCapabilities();
-    const output = { system: [] as string[] };
-    await plugin["experimental.chat.system.transform"]({}, output);
     expect(output.system).toEqual([prompt]);
   });
 
@@ -81,5 +78,10 @@ describe("AgencyAI local capabilities plugin", () => {
         path: "missing.mdx",
       }),
     ).rejects.toThrow("AgencyAI docs page not found");
+  });
+
+  test("module exposes only the plugin factory", async () => {
+    const mod = await import("./agencyai-local-capabilities.js");
+    expect(Object.keys(mod)).toEqual(["AgencyAiLocalCapabilities"]);
   });
 });

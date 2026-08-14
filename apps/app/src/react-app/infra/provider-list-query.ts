@@ -86,6 +86,20 @@ export function isModelAvailableInConnectedProviders(
   );
 }
 
+export function resolveFirstConnectedModel(
+  value: ProviderListResponse | null | undefined,
+): ModelRef | null {
+  for (const provider of getConnectedProviderItems(value)) {
+    const models = provider.models ?? {};
+    const preferredModelId = value?.default?.[provider.id]?.trim() ?? "";
+    const modelID = preferredModelId && models[preferredModelId]
+      ? preferredModelId
+      : Object.keys(models)[0];
+    if (modelID) return { providerID: provider.id, modelID };
+  }
+  return null;
+}
+
 export function getConnectedProviderSnapshotChange(input: {
   baseUrl?: string | null;
   directory?: string | null;

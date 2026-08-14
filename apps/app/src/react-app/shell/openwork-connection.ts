@@ -18,6 +18,15 @@ export type ResolvedOpenworkConnection = {
   source: OpenworkConnectionSource;
 };
 
+export type WaitForOpenworkConnectionOptions = {
+  timeoutMs?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  resolveConnection?: () => Promise<ResolvedOpenworkConnection>;
+  sleep?: (delayMs: number) => Promise<void>;
+  now?: () => number;
+};
+
 function hasUsableConnection(url: string, token: string) {
   return url.trim().length > 0 && token.trim().length > 0;
 }
@@ -133,4 +142,49 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
     hostInfo: null,
     source,
   };
+}
+
+/**
+ * Wait briefly for the desktop bridge to publish a usable local runtime.
+ *
+ * Electron starts the renderer and the embedded server concurrently. A
+ * one-shot probe can therefore report "disconnected" even though the server
+ * becomes ready a few milliseconds later. Keep retries bounded so a genuinely
+ * unavailable runtime still fails promptly and the UI never hangs forever.
+ */
+export async function waitForOpenworkConnection(
+  options: WaitForOpenworkConnectionOptions = {},
+): Promise<ResolvedOpenworkConnection> {
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 12_000);
+  const initialDelayMs = Math.max(1, options.initialDelayMs ?? 100);
+  const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 1_000);
+  const resolveConnection = options.resolveConnection ?? resolveOpenworkConnection;
+  const sleep = options.sleep ?? ((delayMs: number) =>
+    new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  let delayMs = initialDelayMs;
+  let lastConnection = emptyConnection();
+
+  while (true) {
+    try {
+      lastConnection = await resolveConnection();
+    } catch {
+      lastConnection = emptyConnection();
+    }
+
+    if (hasUsableConnection(
+      lastConnection.normalizedBaseUrl,
+      lastConnection.resolvedToken,
+    )) {
+      return lastConnection;
+    }
+
+    const remainingMs = timeoutMs - (now() - startedAt);
+    if (remainingMs <= 0) return lastConnection;
+
+    const nextDelayMs = Math.min(delayMs, remainingMs);
+    await sleep(nextDelayMs);
+    delayMs = Math.min(maxDelayMs, delayMs * 2);
+  }
 }

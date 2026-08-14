@@ -158,7 +158,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     name: "AgencyAI Browser",
     description: "Automate the built-in browser panel that stays visible inside AgencyAI.",
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/agencyai-mark.svg" },
+    icon: { src: "/agencyai-mark.png" },
     composer: { prompt: "Use the AgencyAI Browser extension to " },
     setup: {
       instructions: "AgencyAI Browser is ready by default in desktop workspaces.",
@@ -190,7 +190,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
     preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/agencyai-mark.svg" },
+    icon: { src: "/agencyai-mark.png" },
     composer: { prompt: "Use Computer Use to " },
     setup: {
       instructions: "Computer Use is Mac only. It runs as a local MCP server backed by the macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
@@ -237,7 +237,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     description: "Talk to AgencyAI through a Realtime voice panel that drives the same semantic UI controls as the desktop app.",
     preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/agencyai-mark.svg" },
+    icon: { src: "/agencyai-mark.png" },
     composer: { prompt: "Use Voice Mode to " },
     setup: {
       instructions: "Voice Mode uses OpenAI Realtime. Save an OpenAI API key in AgencyAI environment settings, then open the session rail panel and speak or send a typed voice command.",

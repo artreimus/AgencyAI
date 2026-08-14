@@ -30,17 +30,7 @@ function pngDimensions(filePath) {
   };
 }
 
-test("AgencyAI SVG marks and HTML metadata contain only the product identity", () => {
-  for (const relativePath of [
-    "agencyai-mark.svg",
-    "../../desktop/resources/icons/agencyai-mark.svg",
-    "../../desktop/resources/icons/dev/agencyai-mark-dev.svg",
-  ]) {
-    const source = readFileSync(resolve(rendererPublic, relativePath), "utf8");
-    assert.match(source, /AgencyAI/);
-    assert.doesNotMatch(source, /OpenWork/i);
-  }
-
+test("AgencyAI generated mark and HTML metadata contain only the product identity", () => {
   const indexHtml = readFileSync(
     resolve(repoRoot, "apps/app/index.html"),
     "utf8",
@@ -50,11 +40,12 @@ test("AgencyAI SVG marks and HTML metadata contain only the product identity", (
     "utf8",
   );
   assert.match(indexHtml, /<title>AgencyAI<\/title>/);
-  assert.match(indexHtml, /agencyai-mark\.svg/);
+  assert.match(indexHtml, /agencyai-mark\.png/);
   assert.match(overlayHtml, /<title>AgencyAI Overlay<\/title>/);
   assert.doesNotMatch(`${indexHtml}\n${overlayHtml}`, /OpenWork/);
 
   for (const removed of [
+    "agencyai-mark.svg",
     "openwork-logo.svg",
     "openwork-logo-square.svg",
     "openwork-mark.svg",
@@ -65,6 +56,8 @@ test("AgencyAI SVG marks and HTML metadata contain only the product identity", (
 
 test("generated renderer and desktop raster assets have exact dimensions", () => {
   const expected = new Map([
+    [resolve(iconRoot, "agencyai-icon-source.png"), 1024],
+    [resolve(rendererPublic, "agencyai-mark.png"), 1024],
     [resolve(iconRoot, "icon.png"), 512],
     [resolve(iconRoot, "dev/icon.png"), 512],
     [resolve(iconRoot, "dev/32x32.png"), 32],
@@ -100,4 +93,10 @@ test("production and development assets are valid and visually distinct", () => 
     readFileSync(resolve(iconRoot, "icon.ico")).subarray(0, 4),
     Buffer.from([0, 0, 1, 0]),
   );
+  for (const removed of [
+    resolve(iconRoot, "agencyai-mark.svg"),
+    resolve(iconRoot, "dev/agencyai-mark-dev.svg"),
+  ]) {
+    assert.equal(existsSync(removed), false);
+  }
 });

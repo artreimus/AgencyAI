@@ -5,7 +5,7 @@ This repository is a narrow fork of [OpenCode](https://github.com/anomalyco/open
 - Upstream release: `v1.17.11`
 - Upstream commit: `67aec2212010d67775c35e696d8b8b54902eb338`
 - License: MIT; see `LICENSE`
-- Intended fork tag: `product-opencode-v1.17.11-p3`
+- Intended fork tag: `product-opencode-v1.17.11-p4`
 
 The AgencyAI patch adds a fail-closed `OPENCODE_DISABLE_RUNTIME_DOWNLOADS` policy for npm-backed plugins, provider SDK fallbacks, formatters, and language servers. Existing verified cache entries remain usable. The fork also pins the release lock's `ghostty-web` commit so a frozen dependency install does not follow a moving branch, and builds against a vendored `models.dev` catalog generated from an exact source commit instead of fetching a mutable API response.
 

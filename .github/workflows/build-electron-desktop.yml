@@ -29,7 +29,7 @@ env:
 jobs:
   build-electron:
     name: Build AgencyAI MVP (macOS arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       TARGET: aarch64-apple-darwin
       OPENWORK_RELEASE_BUILD: "1"
@@ -82,7 +82,7 @@ jobs:
 
   electron-macos-notarization-smoke:
     name: Electron macOS notarization smoke
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       TARGET: aarch64-apple-darwin
 

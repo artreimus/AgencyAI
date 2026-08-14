@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ProductProfileName } from "@openwork/product-config";
 
 import {
   DEFAULT_MODEL,
@@ -12,8 +13,10 @@ import {
   parseModelRef,
 } from "../../app/utils";
 import { normalizeModelBehaviorValue } from "../../app/lib/model-behavior";
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
 
 export const storedDefaultModelChangedEvent = "openwork.defaultModelChanged";
+const PRODUCT = getCompiledRendererProductProfile();
 
 export type SessionChoiceOverride = {
   model?: ModelRef | null;
@@ -147,13 +150,33 @@ export function parseWorkspaceModelVariants(
   }
 }
 
-export function readStoredDefaultModel(): ModelRef {
-  if (typeof window === "undefined") return DEFAULT_MODEL;
+export function resolveProductDefaultModel(
+  model: ModelRef | null | undefined,
+  profile: ProductProfileName,
+): ModelRef | null {
+  if (profile !== "local-mvp") return model ?? DEFAULT_MODEL;
+  if (!model) return null;
+
+  const providerId = model.providerID.normalize("NFKC").trim().toLowerCase();
+  if (
+    providerId === "opencode" ||
+    providerId === "openwork" ||
+    providerId.startsWith("lpr_")
+  ) {
+    return null;
+  }
+  return model;
+}
+
+export function readStoredDefaultModel(): ModelRef | null {
+  if (typeof window === "undefined") {
+    return resolveProductDefaultModel(null, PRODUCT.profile);
+  }
   try {
     const stored = window.localStorage.getItem(MODEL_PREF_KEY);
-    return parseModelRef(stored) ?? DEFAULT_MODEL;
+    return resolveProductDefaultModel(parseModelRef(stored), PRODUCT.profile);
   } catch {
-    return DEFAULT_MODEL;
+    return resolveProductDefaultModel(null, PRODUCT.profile);
   }
 }
 
@@ -172,14 +195,14 @@ export function writeStoredDefaultModel(model: ModelRef): void {
  * session/workspace model overrides from context/model-config.ts will be
  * ported incrementally as the session and settings surfaces migrate.
  */
-export function useDefaultModel(): [ModelRef, (next: ModelRef) => void] {
-  const [model, setModel] = useState<ModelRef>(() => readStoredDefaultModel());
+export function useDefaultModel(): [ModelRef | null, (next: ModelRef | null) => void] {
+  const [model, setModel] = useState<ModelRef | null>(() => readStoredDefaultModel());
 
   useEffect(() => {
-    writeStoredDefaultModel(model);
+    if (model) writeStoredDefaultModel(model);
   }, [model]);
 
-  const update = useCallback((next: ModelRef) => {
+  const update = useCallback((next: ModelRef | null) => {
     setModel(next);
   }, []);
 

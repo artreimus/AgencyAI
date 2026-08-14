@@ -20,6 +20,14 @@ const AGENCYAI_DOC_FILES = Object.freeze([
   "providers.mdx",
   "troubleshooting.mdx",
 ]);
+const AGENCYAI_MEMORY_SYSTEM_FILES = Object.freeze([
+  "AGENTS.md",
+  "MEMORY.md",
+  "NOTES.md",
+  "notes/README.md",
+  "notes/TEMPLATE.md",
+  "notes/projects/README.md",
+]);
 
 function helperBundleIds(appId) {
   const helperBundleId = `${appId}.helper`;
@@ -116,6 +124,11 @@ function createElectronBuilderConfig(profile) {
         from: ".generated/agencyai-docs",
         to: "agencyai-docs",
         filter: [...AGENCYAI_DOC_FILES],
+      },
+      {
+        from: "resources/memory-system",
+        to: "agencyai-memory-system",
+        filter: [...AGENCYAI_MEMORY_SYSTEM_FILES],
       },
       {
         from: "resources/licenses/OPENWORK-LICENSE.txt",
@@ -317,3 +330,4 @@ module.exports.loadSelectedProductProfile = loadSelectedProductProfile;
 module.exports.macSigningConfiguration = macSigningConfiguration;
 module.exports.LOCAL_OPENCODE_PLUGIN_FILES = LOCAL_OPENCODE_PLUGIN_FILES;
 module.exports.AGENCYAI_DOC_FILES = AGENCYAI_DOC_FILES;
+module.exports.AGENCYAI_MEMORY_SYSTEM_FILES = AGENCYAI_MEMORY_SYSTEM_FILES;

@@ -147,10 +147,11 @@ async function frameBrandAndComposition(root, check) {
     "Window and overlay titles use AgencyAI",
   );
   check.expect(
-    existsSync(join(publicRoot, "agencyai-mark.svg"))
+    existsSync(join(publicRoot, "agencyai-mark.png"))
+      && !existsSync(join(publicRoot, "agencyai-mark.svg"))
       && !existsSync(join(publicRoot, "openwork-logo.svg"))
       && !existsSync(join(publicRoot, "openwork-mark.svg")),
-    "Renderer assets contain the AgencyAI mark and no upstream logo files",
+    "Renderer assets contain only the generated AgencyAI raster mark and no upstream logo files",
   );
   check.expect(
     statSync(join(desktopIcons, "icon.icns")).size > 100_000
@@ -161,7 +162,7 @@ async function frameBrandAndComposition(root, check) {
   return {
     product: "AgencyAI",
     entry: "product-entry-local.tsx",
-    rendererMark: "agencyai-mark.svg",
+    rendererMark: "agencyai-mark.png",
     iconFormats: ["icns", "ico", "png"],
   };
 }
@@ -394,8 +395,14 @@ async function framePackagedProduct(root, check) {
   );
   check.expect(
     JSON.stringify(result.licenses)
-      === JSON.stringify(["OPENWORK-LICENSE.txt", "OPENCODE-LICENSE.txt"]),
-    "Packaged resources contain the two applicable project license texts",
+      === JSON.stringify([
+        "OPENWORK-LICENSE.txt",
+        "OPENCODE-LICENSE.txt",
+        "THIRD_PARTY_NOTICES.txt",
+        "ELECTRON-LICENSE.txt",
+        "LICENSES.chromium.html",
+      ]),
+    "Packaged resources contain the complete reviewed license and notice closure",
     result.licenses,
   );
   check.expect(

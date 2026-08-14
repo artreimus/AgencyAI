@@ -45,6 +45,23 @@ export function reviewLocalRelease({ requireClean = true } = {}) {
     /^0\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version),
     "Invalid AgencyAI version",
   );
+  const orchestrator = JSON.parse(
+    readFileSync(resolve(repoRoot, "apps/orchestrator/package.json"), "utf8"),
+  );
+  invariant(
+    orchestrator.dependencies?.["openwork-server"] === "workspace:*",
+    "Orchestrator must resolve openwork-server only from this workspace",
+  );
+  const lockfile = readFileSync(resolve(repoRoot, "pnpm-lock.yaml"), "utf8");
+  const orchestratorLock = lockfile.match(
+    /\n  apps\/orchestrator:\n([\s\S]*?)(?=\n  \S)/,
+  )?.[1] ?? "";
+  invariant(
+    /openwork-server:\n\s+specifier: workspace:\*\n\s+version: link:\.\.\/server/.test(
+      orchestratorLock,
+    ),
+    "Lockfile must link the orchestrator to the local AgencyAI server",
+  );
   if (requireClean) {
     invariant(
       run("git", ["status", "--short", "--untracked-files=all"]) === "",

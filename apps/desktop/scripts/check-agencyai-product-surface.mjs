@@ -141,8 +141,8 @@ function verifyRenderer(rendererRoot) {
   assert(index.includes("<title>AgencyAI</title>"), "Renderer index title is not AgencyAI");
   assert(overlay.includes("<title>AgencyAI Overlay</title>"), "Renderer overlay title is not AgencyAI");
   assert(
-    existsSync(join(rendererRoot, "agencyai-mark.svg"))
-      && statSync(join(rendererRoot, "agencyai-mark.svg")).size > 0,
+    existsSync(join(rendererRoot, "agencyai-mark.png"))
+      && statSync(join(rendererRoot, "agencyai-mark.png")).size > 0,
     "Renderer is missing the AgencyAI mark",
   );
   assert(

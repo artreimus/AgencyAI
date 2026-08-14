@@ -21,9 +21,11 @@ import {
 import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
+  resolveProductDefaultModel,
   storedDefaultModelChangedEvent,
   writeStoredDefaultModel,
 } from "./model-config";
+import { getCompiledRendererProductProfile } from "../../app/lib/product-profile";
 
 export type LocalUIState = {
   view: View;
@@ -82,6 +84,7 @@ type LocalContextValue = {
 };
 
 const LocalContext = createContext<LocalContextValue | undefined>(undefined);
+const PRODUCT = getCompiledRendererProductProfile();
 
 const UI_STORAGE_KEY = "openwork.ui";
 export const DEFAULT_SHOW_THINKING = true;
@@ -136,12 +139,12 @@ export function LocalProvider({ children }: LocalProviderProps) {
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
-    if (persisted.defaultModel) {
-      return persisted;
-    }
     return {
       ...persisted,
-      defaultModel: readStoredDefaultModel(),
+      defaultModel: resolveProductDefaultModel(
+        persisted.defaultModel ?? readStoredDefaultModel(),
+        PRODUCT.profile,
+      ),
     };
   });
   const ready = true;
@@ -161,8 +164,8 @@ export function LocalProvider({ children }: LocalProviderProps) {
       const model = readStoredDefaultModel();
       setPrefsRaw((previous) => {
         if (
-          previous.defaultModel?.providerID === model.providerID &&
-          previous.defaultModel.modelID === model.modelID
+          previous.defaultModel?.providerID === model?.providerID &&
+          previous.defaultModel?.modelID === model?.modelID
         ) {
           return previous;
         }

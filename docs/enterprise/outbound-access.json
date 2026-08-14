@@ -55,6 +55,15 @@
       "override": "desktop base URL (self-hosted Den replaces this host)"
     },
     {
+      "host": "auth.openai.com",
+      "kind": "subprocess",
+      "components": ["opencode"],
+      "purpose": "ChatGPT Pro/Plus browser authorization and token refresh performed by the local OpenCode subprocess after a user chooses OpenAI subscription sign-in.",
+      "requirement": "opt-in",
+      "blockedEffect": "Users cannot connect or refresh a ChatGPT Pro/Plus subscription in the local desktop runtime.",
+      "override": null
+    },
+    {
       "host": "cdn.simpleicons.org",
       "kind": "fetched",
       "components": ["renderer"],
@@ -70,6 +79,15 @@
       "purpose": "Google Chat API calls for Google Workspace chat actions.",
       "requirement": "opt-in",
       "blockedEffect": "Google Chat spaces, messages, and send-message actions fail for connected Google Workspace accounts.",
+      "override": null
+    },
+    {
+      "host": "chatgpt.com",
+      "kind": "subprocess",
+      "components": ["opencode"],
+      "purpose": "Authenticated Codex response requests from the local OpenCode subprocess after ChatGPT Pro/Plus sign-in.",
+      "requirement": "opt-in",
+      "blockedEffect": "Subscription-backed OpenAI models cannot answer tasks; API-key and other provider paths are unaffected.",
       "override": null
     },
     {

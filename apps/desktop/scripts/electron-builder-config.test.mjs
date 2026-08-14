@@ -148,6 +148,24 @@ test("local-mvp packages only curated AgencyAI docs and the two project licenses
   ]);
 });
 
+test("local-mvp packages the portable AgencyAI memory-system templates", async () => {
+  const profile = await configModule.loadSelectedProductProfile();
+  const config = configModule.createElectronBuilderConfig(profile);
+  const memoryResource = config.extraResources.find(
+    (entry) => entry.to === "agencyai-memory-system",
+  );
+
+  assert.deepEqual(memoryResource, {
+    from: "resources/memory-system",
+    to: "agencyai-memory-system",
+    filter: [...configModule.AGENCYAI_MEMORY_SYSTEM_FILES],
+  });
+  assert.equal(
+    configModule.AGENCYAI_MEMORY_SYSTEM_FILES.some((entry) => entry.includes("artreimus")),
+    false,
+  );
+});
+
 test("platform identity, helper IDs, NSIS identity, and Linux desktop filename are stable", async () => {
   const profile = await configModule.loadSelectedProductProfile();
   const config = configModule.createElectronBuilderConfig(profile);
@@ -349,31 +367,45 @@ test("AgencyAI PR07 CI uses isolated hosted arm64 runners without release creden
     ),
     "utf8",
   );
-  assert.match(workflow, /runs-on: macos-14/);
-  assert.match(workflow, /runs-on: macos-15/);
+  const buildScript = await readFile(
+    resolve(
+      desktopDirectory,
+      "../../scripts/release/build-pinned-opencode-macos.sh",
+    ),
+    "utf8",
+  );
+  assert.doesNotMatch(workflow, /runs-on: macos-14/);
+  assert.equal(workflow.match(/runs-on: macos-15/g)?.length, 2);
   assert.match(workflow, /test "\$\(uname -m\)" = arm64/);
   assert.match(
     workflow,
+    /run: bash scripts\/release\/build-pinned-opencode-macos\.sh/,
+  );
+  assert.match(
+    buildScript,
     /git -C "\$source_root" fetch --depth=1 origin "\$source_commit"/,
   );
   assert.match(workflow, /OPENCODE_VERSION: "1\.17\.11"/);
-  assert.match(workflow, /test "\$OPENCODE_VERSION" = "\$binary_version"/);
   assert.match(
-    workflow,
+    buildScript,
+    /test "\$\{OPENCODE_VERSION:-\}" = "\$binary_version"/,
+  );
+  assert.match(
+    buildScript,
     /\/Users\/runner\/work\/AgencyAI-OpenCode\/AgencyAI-OpenCode/,
   );
-  assert.match(workflow, /models-dev-snapshot\.json/);
-  assert.match(workflow, /\.dependencies\.modelsDev\.sha256/);
+  assert.match(buildScript, /models-dev-snapshot\.json/);
+  assert.match(buildScript, /\.dependencies\.modelsDev\.sha256/);
   assert.match(
-    workflow,
+    buildScript,
     /export MODELS_DEV_API_JSON="\$models_snapshot"/,
   );
   assert.match(
-    workflow,
+    buildScript,
     /shasum -a 256 "\$models_snapshot"/,
   );
-  assert.match(workflow, /sourceBinarySha256/);
-  assert.match(workflow, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
+  assert.match(buildScript, /sourceBinarySha256/);
+  assert.match(buildScript, /AGENCYAI_VERIFIED_OPENCODE_BINARY_PATH/);
   assert.match(
     workflow,
     /env -u GITHUB_BASE_REF pnpm package:local:dir/,
@@ -527,7 +559,9 @@ test("afterPack consumes builder Arch enums and keeps only shipped sidecars", as
   }
 });
 
-test("afterPack reverses electron-builder's updater-only arbitrary-load override", async () => {
+test("afterPack reverses electron-builder's updater-only arbitrary-load override", {
+  skip: process.platform !== "darwin",
+}, async () => {
   const appOutDir = await mkdtemp(resolve(tmpdir(), "agencyai-after-pack-ats-"));
   const infoPlistPath = resolve(
     appOutDir,
@@ -706,10 +740,12 @@ test("every inherited public mutation is upstream-guarded", async () => {
   );
   const upstreamGuard =
     /github\.repository\s*==\s*['"]different-ai\/openwork['"]/;
-  const privatePublicationAllowlist = new Set([
-    "daytona-eval-image.yml:build-and-push",
+  const agencyGuard =
+    /github\.repository\s*==\s*['"]artreimus\/AgencyAI['"]/;
+  const agencyPublicationAllowlist = new Set([
+    "release-desktop-local.yml:release",
   ]);
-  const observedPrivatePublications = new Set();
+  const observedAgencyPublications = new Set();
 
   function jobNeeds(job) {
     if (Array.isArray(job?.needs)) return job.needs;
@@ -750,11 +786,19 @@ test("every inherited public mutation is upstream-guarded", async () => {
     const jobs = workflow.jobs ?? {};
     for (const [jobName, job] of Object.entries(jobs)) {
       const jobKey = `${fileName}:${jobName}`;
-      if (privatePublicationAllowlist.has(jobKey)) {
-        if (isPublicMutation(job)) observedPrivatePublications.add(jobKey);
-        continue;
+      const isAgencyPublisher = agencyPublicationAllowlist.has(jobKey);
+      if (isAgencyPublisher) {
+        assert.equal(
+          agencyGuard.test(String(job.if ?? "")),
+          true,
+          `${jobKey} must be AgencyAI-repository-guarded`,
+        );
       }
       if (typeof job.uses === "string" && isPublicMutation(job)) {
+        if (isAgencyPublisher) {
+          observedAgencyPublications.add(jobKey);
+          continue;
+        }
         assert.equal(
           upstreamGuard.test(String(job.if ?? "")) ||
             guardedJob(jobs, jobName),
@@ -764,6 +808,10 @@ test("every inherited public mutation is upstream-guarded", async () => {
       }
       for (const step of job.steps ?? []) {
         if (!isPublicMutation(step)) continue;
+        if (isAgencyPublisher) {
+          observedAgencyPublications.add(jobKey);
+          continue;
+        }
         assert.equal(
           upstreamGuard.test(String(step.if ?? "")) ||
             guardedJob(jobs, jobName),
@@ -775,8 +823,8 @@ test("every inherited public mutation is upstream-guarded", async () => {
   }
 
   assert.deepEqual(
-    observedPrivatePublications,
-    privatePublicationAllowlist,
+    observedAgencyPublications,
+    agencyPublicationAllowlist,
   );
 });
 

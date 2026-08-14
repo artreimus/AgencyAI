@@ -100,6 +100,7 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
         GITHUB_TOKEN: "ambient-non-provider-token",
         OPENCODE_MODELS_URL: "https://models.invalid",
         OPENCODE_ENABLE_EXA: "1",
+        OPENCODE_ENABLE_OPENAI_OAUTH: "0",
         OPENCODE_SERVER_PASSWORD: "ambient-password",
         OPENWORK_TOKEN: "ambient-openwork-token",
         OTEL_EXPORTER_OTLP_ENDPOINT: "https://telemetry.invalid",
@@ -112,6 +113,7 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
         OPENCODE_SERVER_USERNAME: "generated-user",
         OPENCODE_SERVER_PASSWORD: "generated-password",
         OPENCODE_ENABLE_EXA: "1",
+        OPENCODE_ENABLE_OPENAI_OAUTH: "0",
       },
       storageEnvironment: {
         OPENWORK_STORAGE_ROOT: "/tmp/agencyai",
@@ -166,6 +168,7 @@ describe("buildLocalMvpOpenCodeChildEnv", () => {
     assert.equal(environment.OPENCODE_DISABLE_LSP_DOWNLOAD, "true");
     assert.equal(environment.OPENCODE_DISABLE_EXTERNAL_SKILLS, "true");
     assert.equal(environment.OPENCODE_DISABLE_DEFAULT_PLUGINS, "true");
+    assert.equal(environment.OPENCODE_ENABLE_OPENAI_OAUTH, "true");
     assert.equal(environment.OPENCODE_DISABLE_REMOTE_CONFIG, "true");
     assert.equal(environment.OPENCODE_DISABLE_REMOTE_INSTRUCTIONS, "true");
     assert.equal(environment.OPENCODE_DISABLE_REMOTE_SKILLS, "true");

@@ -22,6 +22,7 @@ import { getBuildProductProfile } from "@openwork/product-config";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { ensureAgencyAiMemorySystem } from "./memory-system.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import {
   loadOpencodeDistributionSync,
@@ -264,7 +265,7 @@ export function assertDesktopApprovalIpcSender({
   return webContentsId;
 }
 
-function selectedLocalWorkspaceId(workspaceState) {
+function selectedDesktopWorkspaceId(workspaceState) {
   const selectedId = typeof workspaceState?.selectedId === "string"
     ? workspaceState.selectedId.trim()
     : "";
@@ -279,22 +280,6 @@ function selectedLocalWorkspaceId(workspaceState) {
   }
 
   const workspaceId = selectedId || activeId;
-  const matches = Array.isArray(workspaceState?.workspaces)
-    ? workspaceState.workspaces.filter(
-        (workspace) => workspace?.id === workspaceId,
-      )
-    : [];
-  if (matches.length !== 1) {
-    throw new Error("Desktop approval denied: selected workspace is stale");
-  }
-  const workspace = matches[0];
-  if (
-    workspace.workspaceType !== "local" ||
-    typeof workspace.path !== "string" ||
-    !workspace.path.trim()
-  ) {
-    throw new Error("Desktop approval denied: selected workspace is not local");
-  }
   return workspaceId;
 }
 
@@ -351,7 +336,12 @@ export function resolveDesktopApprovalRequestContext({
     throw new Error("Desktop approval denied: invalid WebContents identity");
   }
 
-  const selectedWorkspaceId = selectedLocalWorkspaceId(workspaceState);
+  // The embedded server registry is the local-mvp workspace source of truth.
+  // Electron still owns selection, while runtimeManager.desktopApprovalGrant
+  // validates that the selected ID is an active local workspace immediately
+  // before issuing a one-request credential. Requiring the legacy Electron
+  // registry here rejects server-created workspaces after a fresh install.
+  const selectedWorkspaceId = selectedDesktopWorkspaceId(workspaceState);
   if (workspaceId !== selectedWorkspaceId) {
     throw new Error("Desktop approval denied: request does not match the selected workspace");
   }
@@ -825,6 +815,30 @@ const storageLayout = resolveElectronStorageLayout({
   platform: process.platform,
 });
 await ensureStorageLayout(storageLayout);
+if (PRODUCT_PROFILE.profile === "local-mvp") {
+  const memoryTemplateRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "agencyai-memory-system")
+    : path.resolve(__dirname, "../resources/memory-system");
+  try {
+    const memorySystem = await ensureAgencyAiMemorySystem({
+      opencodeConfigDir: storageLayout.opencodeConfig,
+      templateRoot: memoryTemplateRoot,
+    });
+    if (memorySystem.config.error) {
+      console.warn("[memory-system] templates installed but MEMORY.md is not active", memorySystem.config.error);
+    } else if (memorySystem.createdFiles.length || memorySystem.config.status !== "unchanged") {
+      console.info("[memory-system] app-owned memory configuration ready", {
+        createdFiles: memorySystem.createdFiles,
+        configPath: memorySystem.config.path,
+        configStatus: memorySystem.config.status,
+      });
+    }
+  } catch (error) {
+    // Memory bootstrap must not prevent the local desktop from starting. The
+    // packaged-resource and filesystem behavior is covered by focused tests.
+    console.warn("[memory-system] failed to initialize", error);
+  }
+}
 applyStorageLayoutEnvironment(process.env, storageLayout);
 const networkAudit = createNetworkAuditFromEnvironment({
   env: process.env,

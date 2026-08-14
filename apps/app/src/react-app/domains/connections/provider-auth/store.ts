@@ -35,6 +35,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import {
   ensureProviderListQuery,
   getConnectedProviderItems,
+  resolveFirstConnectedModel,
 } from "../../../infra/provider-list-query";
 import type { OpenworkServerStoreSnapshot } from "../openwork-server-store";
 
@@ -977,6 +978,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     options.setProviders(nextAll);
     options.setProviderDefaults(value.default ?? {});
     options.setProviderConnectedIds(nextConnected);
+    if (!readStoredDefaultModel()) {
+      const replacement = resolveFirstConnectedModel(value);
+      if (replacement) writeStoredDefaultModel(replacement);
+    }
     refreshSnapshot();
     emitChange();
 

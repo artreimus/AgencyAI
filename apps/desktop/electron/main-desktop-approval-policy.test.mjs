@@ -297,7 +297,26 @@ describe("desktop approval workspace and runtime policy", () => {
     );
   });
 
-  it("rejects unsupported operations, remote or stale selections, and inactive runtimes", () => {
+  it("accepts a selected server-owned workspace when the legacy Electron registry is empty", () => {
+    assert.deepEqual(
+      helpers.resolveDesktopApprovalRequestContext({
+        request: {
+          workspaceId: "ws_local",
+          operation: "workspace.inbox.upload",
+        },
+        workspaceState: localWorkspaceState({ workspaces: [] }),
+        runtimeInfo: runtimeInfo(),
+        webContentsId: 17,
+      }),
+      {
+        workspaceId: "ws_local",
+        operation: "workspace.inbox.upload",
+        webContentsId: 17,
+      },
+    );
+  });
+
+  it("rejects unsupported operations, stale selections, and inactive runtimes", () => {
     const base = {
       request: {
         workspaceId: "ws_local",
@@ -318,21 +337,15 @@ describe("desktop approval workspace and runtime policy", () => {
       },
       {
         ...base,
-        workspaceState: localWorkspaceState({
-          workspaces: [{
-            id: "ws_local",
-            workspaceType: "remote",
-            path: "",
-          }],
-        }),
-      },
-      {
-        ...base,
-        workspaceState: localWorkspaceState({ workspaces: [] }),
-      },
-      {
-        ...base,
         workspaceState: localWorkspaceState({ activeId: "ws_previous" }),
+      },
+      {
+        ...base,
+        workspaceState: localWorkspaceState({
+          selectedId: "",
+          activeId: null,
+          workspaces: [],
+        }),
       },
       {
         ...base,

@@ -157,8 +157,8 @@ describe("startEmbeddedServer managed OpenCode models URL", () => {
           sourceBinarySha256:
             "e25766b4da87ee02ec182dc7b78d2fc7fc051bb1e875b97e165485f82fc6640a",
           upstreamCommit: "67aec2212010d67775c35e696d8b8b54902eb338",
-          forkCommit: "1f29421c5386d77e1655f6adbf4585cedce03bc1",
-          forkTag: "product-opencode-v1.17.11-p3",
+          forkCommit: "32018b8929b2ea5d2c8d80a3e5f90aabcf5a46d2",
+          forkTag: "product-opencode-v1.17.11-p4",
           patchset: "local-runtime-policy-v1",
         },
       });

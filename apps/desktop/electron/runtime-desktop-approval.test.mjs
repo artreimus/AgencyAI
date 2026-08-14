@@ -166,7 +166,11 @@ async function createHarness(options = {}) {
     port: api.port,
     url: api.baseUrl,
     config: {
-      workspaces: [{ id: "ws_selected", path: workspacePath }],
+      workspaces: [{
+        id: "ws_selected",
+        path: workspacePath,
+        workspaceType: "local",
+      }],
     },
     storage: null,
     managedOpencodeExecution: null,
@@ -230,6 +234,7 @@ async function createHarness(options = {}) {
     workspacePath,
     productPolicy,
     launchOptions,
+    handle,
     issueInputs,
     revokedWebContents,
     counters: {
@@ -283,7 +288,7 @@ describe("desktop approval runtime plumbing", () => {
     assert.match(launch.opencodeDistribution.binarySha256, /^[a-f0-9]{64}$/);
     assert.equal(
       launch.opencodeDistribution.forkTag,
-      "product-opencode-v1.17.11-p3",
+      "product-opencode-v1.17.11-p4",
     );
     assert.equal(
       launch.opencodeDistribution.upstreamCommit,
@@ -309,6 +314,22 @@ describe("desktop approval runtime plumbing", () => {
     assert.equal(info.remoteAccessEnabled, false);
     assert.equal(info.host, "127.0.0.1");
     assert.equal(info.connectUrl, null);
+  });
+
+  it("restarts local-mvp by re-resolving the verified bundled OpenCode binary", async () => {
+    const harness = await createHarness();
+
+    await harness.runtime.openworkServerRestart();
+    const firstLaunch = harness.launchOptions[0];
+    await harness.runtime.openworkServerRestart();
+    const secondLaunch = harness.launchOptions[1];
+
+    assert.equal(harness.launchOptions.length, 2);
+    assert.equal(secondLaunch.opencodeBin, firstLaunch.opencodeBin);
+    assert.match(
+      secondLaunch.opencodeBin,
+      new RegExp(`opencode-${currentTargetTriple()}`),
+    );
   });
 
   it("issues against the active handle with the exact origins and renderer-exposed owner bearer", async () => {
@@ -364,6 +385,35 @@ describe("desktop approval runtime plumbing", () => {
     );
     assert.equal(tokenStore.includes(RAW_GRANT), false);
     assert.equal(tokenStore.includes("aai_dac_runtime-test"), false);
+  });
+
+  it("rejects grants for workspaces outside the active local server registry", async () => {
+    const harness = await createHarness();
+    await harness.runtime.openworkServerRestart();
+
+    harness.handle.config.workspaces = [];
+    await assert.rejects(
+      harness.runtime.desktopApprovalGrant({
+        workspaceId: "ws_selected",
+        operation: "workspace.file.write",
+        webContentsId: 17,
+      }),
+      /not an active local workspace/,
+    );
+
+    harness.handle.config.workspaces = [{
+      id: "ws_selected",
+      path: harness.workspacePath,
+      workspaceType: "remote",
+    }];
+    await assert.rejects(
+      harness.runtime.desktopApprovalGrant({
+        workspaceId: "ws_selected",
+        operation: "workspace.file.write",
+        webContentsId: 17,
+      }),
+      /not an active local workspace/,
+    );
   });
 
   it("fails when the embedded runtime is stopped or lacks an issuance method", async () => {
