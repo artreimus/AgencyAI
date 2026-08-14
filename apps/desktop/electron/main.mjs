@@ -265,7 +265,7 @@ export function assertDesktopApprovalIpcSender({
   return webContentsId;
 }
 
-function selectedLocalWorkspaceId(workspaceState) {
+function selectedDesktopWorkspaceId(workspaceState) {
   const selectedId = typeof workspaceState?.selectedId === "string"
     ? workspaceState.selectedId.trim()
     : "";
@@ -280,22 +280,6 @@ function selectedLocalWorkspaceId(workspaceState) {
   }
 
   const workspaceId = selectedId || activeId;
-  const matches = Array.isArray(workspaceState?.workspaces)
-    ? workspaceState.workspaces.filter(
-        (workspace) => workspace?.id === workspaceId,
-      )
-    : [];
-  if (matches.length !== 1) {
-    throw new Error("Desktop approval denied: selected workspace is stale");
-  }
-  const workspace = matches[0];
-  if (
-    workspace.workspaceType !== "local" ||
-    typeof workspace.path !== "string" ||
-    !workspace.path.trim()
-  ) {
-    throw new Error("Desktop approval denied: selected workspace is not local");
-  }
   return workspaceId;
 }
 
@@ -352,7 +336,12 @@ export function resolveDesktopApprovalRequestContext({
     throw new Error("Desktop approval denied: invalid WebContents identity");
   }
 
-  const selectedWorkspaceId = selectedLocalWorkspaceId(workspaceState);
+  // The embedded server registry is the local-mvp workspace source of truth.
+  // Electron still owns selection, while runtimeManager.desktopApprovalGrant
+  // validates that the selected ID is an active local workspace immediately
+  // before issuing a one-request credential. Requiring the legacy Electron
+  // registry here rejects server-created workspaces after a fresh install.
+  const selectedWorkspaceId = selectedDesktopWorkspaceId(workspaceState);
   if (workspaceId !== selectedWorkspaceId) {
     throw new Error("Desktop approval denied: request does not match the selected workspace");
   }

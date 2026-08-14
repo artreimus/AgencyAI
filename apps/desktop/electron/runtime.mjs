@@ -2180,11 +2180,16 @@ export function createRuntimeManager({
     if (!Number.isSafeInteger(webContentsId) || webContentsId <= 0) {
       throw new Error("webContentsId must be a positive safe integer");
     }
+    const workspace = Array.isArray(handle.config?.workspaces)
+      ? handle.config.workspaces.find((entry) => entry?.id === workspaceId)
+      : null;
     if (
-      Array.isArray(handle.config?.workspaces) &&
-      !handle.config.workspaces.some((workspace) => workspace?.id === workspaceId)
+      !workspace ||
+      workspace.workspaceType !== "local" ||
+      typeof workspace.path !== "string" ||
+      !workspace.path.trim()
     ) {
-      throw new Error(`Workspace ${workspaceId} is not registered with the embedded server`);
+      throw new Error(`Workspace ${workspaceId} is not an active local workspace`);
     }
 
     const bearerToken =
